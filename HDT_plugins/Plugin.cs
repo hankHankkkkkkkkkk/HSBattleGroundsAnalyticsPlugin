@@ -10,6 +10,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Reflection; 
 using System.Runtime.InteropServices.ComTypes;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -22,7 +23,7 @@ namespace HDTplugins
         public string Name => "Hank的酒馆数据分析";
         public string Description => "统计酒馆战棋英雄选择与排名";
         public string Author => "Hank";
-        public Version Version => new Version(0, 2, 2); // ✅ 改版本号，确保加载新DLL
+        public Version Version => new Version(0, 2, 7); // ✅ 改版本号，确保加载新DLL
         public string ButtonText => "设置";
         public MenuItem MenuItem => null;
 
@@ -50,8 +51,14 @@ namespace HDTplugins
         // =========================
         // 2) 本局关键数据缓存
         // =========================
-        private string _currentHeroCardId = null;          // 本局英雄 CardId
-        private string _currentHeroPowerCardId = null;     // 本局英雄技能 CardId
+        private string _currentHeroCardId = null;
+
+        // 本局英雄 CardId
+        private string _currentHeroPowerCardId = null;
+
+        //含英雄皮肤英雄ID
+        private string _currentHeroSkinCardId = null;
+
         private int _lastValidPlacement = 0;               // 本局名次（实时缓存）
         private int[] _lastOfferedHeroDbfIds = Array.Empty<int>(); // offered heroes（dbfId）
 
@@ -80,6 +87,19 @@ namespace HDTplugins
         private string _finalFilePath;     // Data/bg_stats.jsonl
         private string _pendingFilePath;   // Data/bg_stats_pending.jsonl
 
+        // =========================
+        // BG 分数（MMR/Rating）相关
+        // =========================
+        private int _ratingBefore = -1;  // 本局开始/选定英雄后记录的分数
+        private int _ratingAfter = -1;   // 赛后记录的分数
+
+        private bool _needResolveRatingAfter = false;
+        private long _ratingResolveStartTs = 0;
+        private const int RatingResolveTimeoutMs = 45_000;
+        private const int RatingPollMs = 500;
+        private long _nextRatingPollTs = 0;
+
+
         private string _currentMatchId = null;  // 本局唯一ID（用来 finalize）
         private bool _wrotePending = false;     // 防止重复写 pending
 
@@ -101,17 +121,39 @@ namespace HDTplugins
             Log.Info("[Hank的log信息] 插件已加载（已订阅事件）");
 
             // 初始化数据目录（插件DLL同目录/Data）
+
             try
             {
-                var pluginDir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
-                _dataDir = Path.Combine(pluginDir, "Data");
+                // 旧目录：安装目录\Plugins\Data（你现在用的）
+                var oldDir = _dataDir; // 如果你之前没赋值，可直接按下面方式算一次
+                var oldHdtDir = GetHdtInstallDir();
+                if (!string.IsNullOrEmpty(oldHdtDir))
+                    oldDir = Path.Combine(oldHdtDir, "Plugins", "Data");
+
+                var oldFinal = Path.Combine(oldDir ?? "", "bg_stats.jsonl");
+                var oldPending = Path.Combine(oldDir ?? "", "bg_stats_pending.jsonl");
+
+                // ✅ 新目录：%LocalAppData%\HDT_BGStats\Data
+                var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                _dataDir = Path.Combine(local, "HDT_BGStats", "Data");
                 Directory.CreateDirectory(_dataDir);
 
                 _finalFilePath = Path.Combine(_dataDir, "bg_stats.jsonl");
                 _pendingFilePath = Path.Combine(_dataDir, "bg_stats_pending.jsonl");
 
-                Log.Info($"[Hank的log信息] 数据文件路径(final)：{_finalFilePath}");
-                Log.Info($"[Hank的log信息] 数据文件路径(pending)：{_pendingFilePath}");
+                // （你已注释 SaveMatchRecord，但保留兼容不坏事）
+                _dataFilePath = _finalFilePath;
+
+                // ✅ 启动先备份（防任何意外）
+                BackupFileIfExists(_finalFilePath);
+
+                // ✅ 迁移：如果新文件不存在/为空，而旧文件存在且有内容，把旧文件搬过来
+                MigrateIfNeeded(oldFinal, _finalFilePath);
+                MigrateIfNeeded(oldPending, _pendingFilePath);
+
+                Log.Info($"[Hank的log信息] 数据目录(AppData Local)：{_dataDir}");
+                Log.Info($"[Hank的log信息] final：{_finalFilePath}");
+                Log.Info($"[Hank的log信息] pending：{_pendingFilePath}");
             }
             catch (Exception ex)
             {
@@ -142,6 +184,8 @@ namespace HDTplugins
             if (nowTs < _nextPollTs) return;
             _nextPollTs = nowTs + MsToTicks(PollIntervalMs);
 
+            if (_needResolveRatingAfter)
+                TryResolveRatingAfter(nowTs);
             // =========================
             // ✅ 每 2 秒必定输出一次侦测信息（即使 BG 未识别也输出）
             // 目的：确认 OnUpdate 真的在跑 + Core.Game 的关键字段是否为空
@@ -225,6 +269,9 @@ namespace HDTplugins
             _currentMatchId = null;
             _wrotePending = false;
 
+            _ratingBefore = -1;
+            _ratingAfter = -1;
+
             Log.Info("[Hank的log信息] 对局开始：已重置状态，等待识别BG + 解析英雄/英雄技能/可选英雄信息");
         }
 
@@ -239,14 +286,30 @@ namespace HDTplugins
             Log.Info("[Hank的log信息] 对局结束：进入等待名次状态");
 
             TryCachePlacement(); // ✅ 结算瞬间再抓一次，常常就在这一刻写入
+            _needResolveRatingAfter = true;    // ✅ 开始赛后抓分数
+            _ratingResolveStartTs = Stopwatch.GetTimestamp();
+            _nextRatingPollTs = 0;
 
             // 优先用缓存名次（最稳）
             if (_lastValidPlacement >= 1 && _lastValidPlacement <= 8)
             {
-                Log.Info($"[Hank的log信息] 本局结果：Hero={_currentHeroCardId ?? "null"}, HeroPower={_currentHeroPowerCardId ?? "null"}, 名次={_lastValidPlacement}（来自缓存）");
-                FinalizeRecordIfPossible();
-                SaveMatchRecord();
-                _needResolvePlacement = false;
+                var delta = 0;
+                if (_ratingBefore > 0 && _ratingAfter > 0)
+                    delta = _ratingAfter - _ratingBefore;
+
+                Log.Info(
+                    $"[Hank的log信息] 本局结果：英雄={_currentHeroCardId ?? "null"}, " +
+                    $"HeroPower={_currentHeroPowerCardId ?? "null"}, " +
+                    $"名次={_lastValidPlacement}（来自缓存），" +
+                    $"开始前分数={_ratingBefore}, 开始后分数={_ratingAfter}, 分数变化={delta}"
+                );
+
+                // 结束时只开启“等待名次+等待分数”，不要写文件
+                _needResolvePlacement = true;
+                _needResolveRatingAfter = true;              // 你新增的赛后分数轮询开关
+                _ratingResolveStartTs = Stopwatch.GetTimestamp();
+                _nextRatingPollTs = 0;
+
                 return;
             }
 
@@ -382,8 +445,9 @@ namespace HDTplugins
 
                 var resolvedHero = heroB ?? heroA;
                 if (!string.IsNullOrEmpty(resolvedHero))
-                    // ✅ 统一归一化，避免皮肤 ID 污染统计
-                    _currentHeroCardId = NormalizeBgHeroId(resolvedHero);
+                    _currentHeroSkinCardId = resolvedHero;
+                // ✅ 统一归一化，避免皮肤 ID 污染统计
+                _currentHeroCardId = NormalizeBgHeroId(resolvedHero);
 
                 if (!string.IsNullOrEmpty(_currentHeroCardId))
                 {
@@ -427,7 +491,7 @@ namespace HDTplugins
                 {
                     _needResolvePlacement = false;
                     Log.Info($"[Hank的log信息] 本局结果：Hero={_currentHeroCardId ?? "null"}, HeroPower={_currentHeroPowerCardId ?? "null"}, 名次={_lastValidPlacement}");
-                    SaveMatchRecord();
+                    //SaveMatchRecord();
                 }
             }
             catch (Exception ex)
@@ -484,44 +548,46 @@ namespace HDTplugins
         /// <summary>
         /// 将本局数据追加写入 jsonl 文件（兼容 .NET Framework，无需 Json 库）
         /// </summary>
-        private void SaveMatchRecord()
-        {
-            try
-            {
-                if (string.IsNullOrEmpty(_dataFilePath))
-                    return;
+        //private void SaveMatchRecord()
+        //{
+        //    try
+        //    {
+        //        if (string.IsNullOrEmpty(_dataFilePath))
+        //            return;
 
-                Log.Info("[Hank的log信息] SaveMatchRecord 被调用");
+        //        Log.Info("[Hank的log信息] SaveMatchRecord 被调用");
 
-                var timestamp = DateTime.UtcNow.ToString("o"); // ISO8601
+        //        var timestamp = DateTime.UtcNow.ToString("o"); // ISO8601
 
-                // 获取游戏版本信息
-                var gameVersion = TryGetHearthstoneVersionFromLogs();
+        //        // 获取游戏版本信息
+        //        var gameVersion = TryGetHearthstoneVersionFromLogs();
 
-                var heroId = _currentHeroCardId ?? "";
-                var heroname = GetHeroName(heroId);
+        //        var heroId = _currentHeroCardId ?? "";
+        //        var heroname = GetHeroName(heroId);
 
-                //var offered = _lastOfferedHeroDbfIds != null && _lastOfferedHeroDbfIds.Length > 0
-                //    ? string.Join(",", _lastOfferedHeroDbfIds)
-                //    : "";
 
-                var line =
-                    "{"
-                    + $"\"timestamp\":\"{timestamp}\","
-                    + $"\"heroCardId\":\"{_currentHeroCardId ?? ""}\","
-                    + $"\"heroName\":\"{JsonEscape(heroname)}\","
-                    + $"\"placement\":{_lastValidPlacement},"
-                    //+ $"\"offeredHeroes\":[{offered}]"
-                    + $"\"gameVersion\":\"{JsonEscape(gameVersion)}\","
-                    + "}";
+        ////var offered = _lastOfferedHeroDbfIds != null && _lastOfferedHeroDbfIds.Length > 0
+        ////    ? string.Join(",", _lastOfferedHeroDbfIds)
+        ////    : "";
 
-                File.AppendAllText(_dataFilePath, line + Environment.NewLine);
-            }
-            catch (Exception ex)
-            {
-                Log.Error("[Hank的log信息] 写入数据文件失败: " + ex.Message);
-            }
-        }
+        //var line =
+        //            "{"
+        //            + $"\"timestamp\":\"{timestamp}\","
+        //            + $"\"heroCardId\":\"{_currentHeroCardId ?? ""}\","
+        //            + $"\"heroName\":\"{JsonEscape(heroname)}\","
+        //            + $"\"placement\":{_lastValidPlacement},"
+        //            //+ $"\"offeredHeroes\":[{offered}]"
+        //            + $"\"gameVersion\":\"{JsonEscape(gameVersion)}\","
+        //            + $"\"heroSkinCardId\":\"{JsonEscape(_currentHeroSkinCardId ?? "")}\","
+        //            + "}";
+
+        //        File.AppendAllText(_dataFilePath, line + Environment.NewLine);
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        Log.Error("[Hank的log信息] 写入数据文件失败: " + ex.Message);
+        //    }
+        //}
 
         /// <summary>
         /// CardId -> 名字（优先 LocalizedName，其次 Name）
@@ -703,6 +769,9 @@ namespace HDTplugins
                 _currentMatchId = Guid.NewGuid().ToString("N");
                 _wrotePending = true;
 
+                _ratingBefore = TryGetCurrentBattlegroundsRating() ?? -1;
+                var ratingBefore = _ratingBefore;
+
                 var timestamp = DateTime.UtcNow.ToString("o");
                 var heroId = _currentHeroCardId ?? "";
                 var heroName = GetHeroName(heroId);
@@ -716,6 +785,9 @@ namespace HDTplugins
                     + $"\"gameVersion\":\"{JsonEscape(gameVersion)}\","
                     + $"\"heroCardId\":\"{JsonEscape(heroId)}\","
                     + $"\"heroName\":\"{JsonEscape(heroName)}\","
+                    + $"\"ratingBefore\":{ratingBefore},"
+                    + $"\"ratingAfter\":-1,"
+                    + $"\"ratingDelta\":0,"
                     + $"\"placement\":-1"
                     + "}";
 
@@ -779,6 +851,25 @@ namespace HDTplugins
                 // 把 placement 从 -1 替换成最终名次（只替换第一次出现）
                 var finalized = ReplaceFirst(target, "\"placement\":-1", $"\"placement\":{_lastValidPlacement}");
 
+                //// 赛后抓一次当前分数（更稳：你说的“赛后读当前分数”）
+                //_ratingAfter = TryGetCurrentBattlegroundsRating() ?? -1;
+
+                // ratingBefore 如果本局没抓到，就用 -1
+                var before = _ratingBefore;
+                var after = _ratingAfter;
+                var delta = (before >= 0 && after >= 0) ? (after - before) : 0;
+
+
+                // 先替换名次
+                finalized = ReplaceFirst(finalized, "\"placement\":-1", $"\"placement\":{_lastValidPlacement}");
+
+                // 再替换分数
+                finalized = ReplaceFirst(finalized, "\"ratingAfter\":-1", $"\"ratingAfter\":{after}");
+                finalized = ReplaceFirst(finalized, "\"ratingDelta\":0", $"\"ratingDelta\":{delta}");
+
+                // （可选）如果你希望即使 before 没写到，也在这里补一下：
+                finalized = ReplaceFirst(finalized, $"\"ratingBefore\":{before}", $"\"ratingBefore\":{before}");
+
                 // 追加到 final
                 File.AppendAllText(_finalFilePath, finalized + Environment.NewLine, Encoding.UTF8);
 
@@ -807,6 +898,216 @@ namespace HDTplugins
             return text.Substring(0, idx) + replace + text.Substring(idx + search.Length);
         }
 
+        /// <summary>
+        /// 尝试获取当前酒馆分数（MMR/Rating）
+        /// - 兼容不同 HDT 版本：用反射读取 Core.Game 的属性
+        /// - 返回 null 表示当前拿不到（比如还没加载完成/对局外）
+        /// </summary>
+        private int? TryGetCurrentBattlegroundsRating()
+        {
+            try
+            {
+                var game = Core.Game;
+                if (game == null)
+                    return null;
+
+                var gt = game.GetType();
+
+                // ① 新版常见：Core.Game.CurrentBattlegroundsRating : int?
+                var pCurrent = gt.GetProperty("CurrentBattlegroundsRating", BindingFlags.Public | BindingFlags.Instance);
+                if (pCurrent != null)
+                {
+                    var v = pCurrent.GetValue(game, null);
+                    if (v is int i) return i;
+                    if (v is int ni) return ni;
+                }
+
+                // ② 另一条：Core.Game.BattlegroundsRatingInfo 里有 Rating / DuosRating
+                var pInfo = gt.GetProperty("BattlegroundsRatingInfo", BindingFlags.Public | BindingFlags.Instance);
+                if (pInfo != null)
+                {
+                    var info = pInfo.GetValue(game, null);
+                    if (info != null)
+                    {
+                        var it = info.GetType();
+                        var isDuos = game.IsBattlegroundsDuosMatch;
+
+                        var pDuos = it.GetProperty("DuosRating", BindingFlags.Public | BindingFlags.Instance);
+                        var pSolo = it.GetProperty("Rating", BindingFlags.Public | BindingFlags.Instance);
+
+                        var vv = isDuos ? pDuos?.GetValue(info, null) : pSolo?.GetValue(info, null);
+                        if (vv is int j) return j;
+                        if (vv is int nj) return nj;
+                    }
+                }
+
+                // ③ 兜底：CurrentGameStats 里可能有 BattlegroundsRating / BattlegroundsRatingAfter
+                var pStats = gt.GetProperty("CurrentGameStats", BindingFlags.Public | BindingFlags.Instance);
+                var stats = pStats?.GetValue(game, null);
+                if (stats != null)
+                {
+                    var st = stats.GetType();
+
+                    // 赛后更可能写入 After；对局中可能只有 Rating
+                    var pAfter = st.GetProperty("BattlegroundsRatingAfter", BindingFlags.Public | BindingFlags.Instance);
+                    var pBase = st.GetProperty("BattlegroundsRating", BindingFlags.Public | BindingFlags.Instance);
+
+                    var after = pAfter?.GetValue(stats, null);
+                    if (after is int a && a > 0)
+                        return a;
+
+                    var baseV = pBase?.GetValue(stats, null);
+                    if (baseV is int b && b > 0)
+                        return b;
+                }
+            }
+            catch
+            {
+                // ignore
+            }
+
+            return null;
+        }
+
+        // 获取安装路径
+        private static string GetHdtInstallDir()
+        {
+            try
+            {
+                // 通常最准确：拿到当前进程的 exe 路径（就是 HDT.exe）
+                var exePath = Process.GetCurrentProcess().MainModule.FileName;
+                if (!string.IsNullOrEmpty(exePath))
+                    return Path.GetDirectoryName(exePath);
+            }
+            catch { /* 某些权限/环境可能抛异常 */ }
+
+            try
+            {
+                // 兜底：AppDomain 的 BaseDirectory 通常也是 exe 目录
+                var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                if (!string.IsNullOrEmpty(baseDir))
+                    return baseDir.TrimEnd('\\');
+            }
+            catch { }
+
+            return null;
+        }
+
+        //获取分数
+        private void TryResolveRatingAfter(long nowTs)
+        {
+            // 节流
+            if (nowTs < _nextRatingPollTs) return;
+            _nextRatingPollTs = nowTs + MsToTicks(RatingPollMs);
+
+            // 超时退出（避免永远轮询）
+            var elapsedMs = (long)((nowTs - _ratingResolveStartTs) * 1000.0 / Stopwatch.Frequency);
+            if (elapsedMs > RatingResolveTimeoutMs)
+            {
+                Log.Warn("[BGStats] 赛后分数获取超时，停止轮询");
+                _needResolveRatingAfter = false;
+                return;
+            }
+
+            // ====== 方式 A：直接拿结算变化数据（最稳）======
+            // HearthMirror.Reflection.Client.GetBaconRatingChangeData()
+            // 注意：为了兼容不同版本，用反射调用
+            var afterA = TryGetBattlegroundsRatingAfterFromBaconChangeData();
+            if (afterA.HasValue && afterA.Value > 0)
+            {
+                _ratingAfter = afterA.Value;
+                _needResolveRatingAfter = false;
+                Log.Info($"[BGStats] 通过 BaconRatingChangeData 拿到 ratingAfter={_ratingAfter}");
+                TryFinalizeIfReady();
+                return;
+            }
+
+            // ====== 方式 C：HDT 已写入的 CurrentGameStats.BattlegroundsRatingAfter ======
+            var afterC = TryGetBattlegroundsRatingAfterFromGameStats();
+            if (afterC.HasValue && afterC.Value > 0)
+            {
+                _ratingAfter = afterC.Value;
+                _needResolveRatingAfter = false;
+                Log.Info($"[BGStats] 通过 CurrentGameStats 拿到 ratingAfter={_ratingAfter}");
+                TryFinalizeIfReady();
+                return;
+            }
+
+            // ====== 方式 B：持续读当前分数直到变化（兜底）======
+            var current = TryGetCurrentBattlegroundsRating();
+            if (current.HasValue && current.Value > 0 && _ratingBefore > 0 && current.Value != _ratingBefore)
+            {
+                _ratingAfter = current.Value;
+                _needResolveRatingAfter = false;
+                Log.Info($"[BGStats] 通过“分数变化检测”拿到 ratingAfter={_ratingAfter} (before={_ratingBefore})");
+                TryFinalizeIfReady();
+                return;
+            }
+        }
+
+        private int? TryGetBattlegroundsRatingAfterFromBaconChangeData()
+        {
+            try
+            {
+                var asm = typeof(Hearthstone_Deck_Tracker.Core).Assembly;
+
+                // HearthMirror.Reflection.Client
+                var tClient = asm.GetType("HearthMirror.Reflection.Client");
+                if (tClient == null) return null;
+
+                var mi = tClient.GetMethod("GetBaconRatingChangeData", BindingFlags.Public | BindingFlags.Static);
+                if (mi == null) return null;
+
+                var data = mi.Invoke(null, null);
+                if (data == null) return null;
+
+                // data.NewRating
+                var pNew = data.GetType().GetProperty("NewRating", BindingFlags.Public | BindingFlags.Instance);
+                var v = pNew?.GetValue(data, null);
+                if (v is int i) return i;
+
+                return null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private int? TryGetBattlegroundsRatingAfterFromGameStats()
+        {
+            try
+            {
+                var after = Core.Game.CurrentGameStats?.BattlegroundsRatingAfter;
+                if (after.HasValue && after.Value > 0)
+                    return after.Value;
+            }
+            catch { }
+            return null;
+        }
+
+        private void TryFinalizeIfReady()
+        {
+            var duos = Core.Game.IsBattlegroundsDuosMatch;
+            var maxPlace = duos ? 4 : 8;
+
+            if (!(_lastValidPlacement >= 1 && _lastValidPlacement <= maxPlace))
+                return;
+
+            if (_ratingAfter <= 0)
+                return;
+
+            // 可选：你想“直到变化再写”，就保留这句
+            if (_ratingBefore > 0 && _ratingAfter == _ratingBefore)
+                return;
+
+            FinalizeRecordIfPossible();
+
+            // finalize 成功后把轮询关掉（避免重复）
+            _needResolvePlacement = false;
+            _needResolveRatingAfter = false;
+        }
+
         private static bool SameArray(int[] a, int[] b)
         {
             if (ReferenceEquals(a, b)) return true;
@@ -816,5 +1117,55 @@ namespace HDTplugins
                 if (a[i] != b[i]) return false;
             return true;
         }
+
+        private static void MigrateIfNeeded(string from, string to)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(from) || string.IsNullOrEmpty(to))
+                    return;
+
+                if (!File.Exists(from))
+                    return;
+
+                var fromLen = new FileInfo(from).Length;
+                if (fromLen <= 0)
+                    return;
+
+                var toExists = File.Exists(to);
+                var toLen = toExists ? new FileInfo(to).Length : 0;
+
+                // 只有目标不存在或为空才迁移，避免重复复制
+                if (!toExists || toLen == 0)
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(to));
+                    File.Copy(from, to, overwrite: true);
+                }
+            }
+            catch { /* ignore */ }
+        }
+
+        private static void BackupFileIfExists(string path)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(path) || !File.Exists(path))
+                    return;
+
+                var fi = new FileInfo(path);
+                if (fi.Length <= 0)
+                    return;
+
+                var dir = Path.GetDirectoryName(path);
+                var bakDir = Path.Combine(dir, "backups");
+                Directory.CreateDirectory(bakDir);
+
+                var ts = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
+                var bak = Path.Combine(bakDir, $"bg_stats.{ts}.bak.jsonl");
+                File.Copy(path, bak, overwrite: false);
+            }
+            catch { /* ignore */ }
+        }
+
     }
 }
