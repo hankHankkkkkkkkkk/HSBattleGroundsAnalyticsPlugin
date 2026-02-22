@@ -1,4 +1,5 @@
-﻿using HearthDb.Enums;
+﻿using HearthDb;
+using HearthDb.Enums;
 using Hearthstone_Deck_Tracker.API;
 using Hearthstone_Deck_Tracker.Enums.Hearthstone;
 using Hearthstone_Deck_Tracker.Hearthstone;
@@ -8,10 +9,11 @@ using Hearthstone_Deck_Tracker.Utility.Logging;
 using System;
 using System.Diagnostics;
 using System.IO;
-using System.Text.RegularExpressions;
 using System.Linq;
+using System.Runtime.InteropServices.ComTypes;
+using System.Text;
+using System.Text.RegularExpressions;
 using System.Windows.Controls;
-using HearthDb;
 
 namespace HDTplugins
 {
@@ -20,7 +22,7 @@ namespace HDTplugins
         public string Name => "Hank的酒馆数据分析";
         public string Description => "统计酒馆战棋英雄选择与排名";
         public string Author => "Hank";
-        public Version Version => new Version(0, 2, 0); // ✅ 改版本号，确保加载新DLL
+        public Version Version => new Version(0, 2, 2); // ✅ 改版本号，确保加载新DLL
         public string ButtonText => "设置";
         public MenuItem MenuItem => null;
 
@@ -69,8 +71,17 @@ namespace HDTplugins
         // =========================
         // 5) 数据落盘相关
         // =========================
+        // =========================
+        // 两阶段写入：pending -> final
+        // =========================
         private string _dataDir;
         private string _dataFilePath;
+
+        private string _finalFilePath;     // Data/bg_stats.jsonl
+        private string _pendingFilePath;   // Data/bg_stats_pending.jsonl
+
+        private string _currentMatchId = null;  // 本局唯一ID（用来 finalize）
+        private bool _wrotePending = false;     // 防止重复写 pending
 
         private int _nextPlacementDbgTick = 0;      // 可选：调试节流
         private const int PlacementDbgIntervalMs = 1500;
@@ -87,24 +98,24 @@ namespace HDTplugins
             GameEvents.OnGameStart.Add(OnGameStart);
             GameEvents.OnGameEnd.Add(OnGameEnd);
 
-            Log.Info("[BGStats] 插件已加载（已订阅事件）");
+            Log.Info("[Hank的log信息] 插件已加载（已订阅事件）");
 
             // 初始化数据目录（插件DLL同目录/Data）
             try
             {
-                var pluginDir = Path.GetDirectoryName(
-                    System.Reflection.Assembly.GetExecutingAssembly().Location);
-
+                var pluginDir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
                 _dataDir = Path.Combine(pluginDir, "Data");
                 Directory.CreateDirectory(_dataDir);
 
-                _dataFilePath = Path.Combine(_dataDir, "bg_stats.jsonl");
+                _finalFilePath = Path.Combine(_dataDir, "bg_stats.jsonl");
+                _pendingFilePath = Path.Combine(_dataDir, "bg_stats_pending.jsonl");
 
-                Log.Info($"[BGStats] 数据文件路径：{_dataFilePath}");
+                Log.Info($"[Hank的log信息] 数据文件路径(final)：{_finalFilePath}");
+                Log.Info($"[Hank的log信息] 数据文件路径(pending)：{_pendingFilePath}");
             }
             catch (Exception ex)
             {
-                Log.Error("[BGStats] 初始化数据目录失败: " + ex.Message);
+                Log.Error("[Hank的log信息] 初始化数据目录失败: " + ex.Message);
             }
         }
 
@@ -112,12 +123,12 @@ namespace HDTplugins
         {
             // 你的 ActionList 没有 Remove，所以这里只关闭开关
             _enabled = false;
-            Log.Info("[BGStats] 插件已卸载（已关闭开关）");
+            Log.Info("[Hank的log信息] 插件已卸载（已关闭开关）");
         }
 
         public void OnButtonPress()
         {
-            Debug.WriteLine("[BGStats] 点击了设置按钮");
+            Debug.WriteLine("[Hank的log信息] 点击了设置按钮");
         }
 
         public void OnUpdate()
@@ -166,7 +177,7 @@ namespace HDTplugins
                 if (TryDetectBattlegrounds())
                 {
                     _bgDetected = true;
-                    Log.Info("[BGStats] 已识别为酒馆战棋对局（检测条件满足），开始解析英雄/选将/名次数据");
+                    Log.Info("[Hank的log信息] 已识别为酒馆战棋对局（检测条件满足），开始解析英雄/选将/名次数据");
                 }
                 else
                 {
@@ -211,7 +222,10 @@ namespace HDTplugins
 
             _heroResolveStartTs = Stopwatch.GetTimestamp();
 
-            Log.Info("[BGStats] 对局开始：已重置状态，等待识别BG + 解析英雄/英雄技能/可选英雄信息");
+            _currentMatchId = null;
+            _wrotePending = false;
+
+            Log.Info("[Hank的log信息] 对局开始：已重置状态，等待识别BG + 解析英雄/英雄技能/可选英雄信息");
         }
 
         private void OnGameEnd()
@@ -222,14 +236,16 @@ namespace HDTplugins
             if (!_bgDetected)
                 return;
 
-            Log.Info("[BGStats] 对局结束：进入等待名次状态");
+            Log.Info("[Hank的log信息] 对局结束：进入等待名次状态");
 
             TryCachePlacement(); // ✅ 结算瞬间再抓一次，常常就在这一刻写入
 
             // 优先用缓存名次（最稳）
             if (_lastValidPlacement >= 1 && _lastValidPlacement <= 8)
             {
-                Log.Info($"[BGStats] 本局结果：Hero={_currentHeroCardId ?? "null"}, HeroPower={_currentHeroPowerCardId ?? "null"}, 名次={_lastValidPlacement}（来自缓存）");
+                Log.Info($"[Hank的log信息] 本局结果：Hero={_currentHeroCardId ?? "null"}, HeroPower={_currentHeroPowerCardId ?? "null"}, 名次={_lastValidPlacement}（来自缓存）");
+                FinalizeRecordIfPossible();
+                SaveMatchRecord();
                 _needResolvePlacement = false;
                 return;
             }
@@ -313,11 +329,11 @@ namespace HDTplugins
                     return;
                 _nextOfferedLogTs = nowTs + MsToTicks(OfferedLogThrottleMs);
 
-                Log.Info($"[BGStats] Offered heroes(dbfId) = [{string.Join(", ", heroes)}]");
+                Log.Info($"[Hank的log信息] Offered heroes(dbfId) = [{string.Join(", ", heroes)}]");
             }
             catch (Exception ex)
             {
-                Log.Error("[BGStats] TryResolveOfferedHeroes 失败: " + ex.Message);
+                Log.Error("[Hank的log信息] TryResolveOfferedHeroes 失败: " + ex.Message);
             }
         }
 
@@ -366,28 +382,30 @@ namespace HDTplugins
 
                 var resolvedHero = heroB ?? heroA;
                 if (!string.IsNullOrEmpty(resolvedHero))
-                    _currentHeroCardId = resolvedHero;
+                    // ✅ 统一归一化，避免皮肤 ID 污染统计
+                    _currentHeroCardId = NormalizeBgHeroId(resolvedHero);
 
                 if (!string.IsNullOrEmpty(_currentHeroCardId))
                 {
                     _needResolveHero = false;
+                    Log.Info($"[Hank的log信息] 已解析英雄：Hero={_currentHeroCardId}, HeroPower={_currentHeroPowerCardId ?? "null"}");
 
-                    var heroName = GetHeroName(_currentHeroCardId);
+                    // ✅ 第一次拿到真实英雄时，先写 pending（不含名次）
+                    WritePendingRecordIfNeeded();
 
-                    Log.Info($"[BGStats] 已解析英雄：Hero={heroName} ({_currentHeroCardId}), HeroPower={_currentHeroPowerCardId ?? "null"}");
                     return;
                 }
 
-                // 等待过久提示
-                var elapsedMs = (long)((nowTs - _heroResolveStartTs) * 1000.0 / Stopwatch.Frequency);
-                if (elapsedMs > HeroWarnAfterMs && elapsedMs < HeroWarnAfterMs + PollIntervalMs)
-                {
-                    Log.Warn("[BGStats] 已等待超过45秒仍未拿到真实英雄ID（可能重连/加载异常/一直占位）。将继续等待直到拿到。");
-                }
+                //// 等待过久提示
+                //var elapsedMs = (long)((nowTs - _heroResolveStartTs) * 1000.0 / Stopwatch.Frequency);
+                //if (elapsedMs > HeroWarnAfterMs && elapsedMs < HeroWarnAfterMs + PollIntervalMs)
+                //{
+                //    Log.Warn("[Hank的log信息] 已等待超过45秒仍未拿到真实英雄ID（可能重连/加载异常/一直占位）。将继续等待直到拿到。");
+                //}
             }
             catch (Exception ex)
             {
-                Log.Error("[BGStats] TryResolveHeroAndHeroPower 失败: " + ex.Message);
+                Log.Error("[Hank的log信息] TryResolveHeroAndHeroPower 失败: " + ex.Message);
             }
         }
 
@@ -408,13 +426,13 @@ namespace HDTplugins
                 if (_lastValidPlacement >= 1 && _lastValidPlacement <= maxPlace)
                 {
                     _needResolvePlacement = false;
-                    Log.Info($"[BGStats] 本局结果：Hero={_currentHeroCardId ?? "null"}, HeroPower={_currentHeroPowerCardId ?? "null"}, 名次={_lastValidPlacement}");
+                    Log.Info($"[Hank的log信息] 本局结果：Hero={_currentHeroCardId ?? "null"}, HeroPower={_currentHeroPowerCardId ?? "null"}, 名次={_lastValidPlacement}");
                     SaveMatchRecord();
                 }
             }
             catch (Exception ex)
             {
-                Log.Error("[BGStats] TryResolvePlacement 失败: " + ex.Message);
+                Log.Error("[Hank的log信息] TryResolvePlacement 失败: " + ex.Message);
             }
         }
 
@@ -459,7 +477,7 @@ namespace HDTplugins
             }
             catch (Exception ex)
             {
-                Log.Error("[BGStats] TryCachePlacement 失败: " + ex.Message);
+                Log.Error("[Hank的log信息] TryCachePlacement 失败: " + ex.Message);
             }
         }
 
@@ -472,6 +490,8 @@ namespace HDTplugins
             {
                 if (string.IsNullOrEmpty(_dataFilePath))
                     return;
+
+                Log.Info("[Hank的log信息] SaveMatchRecord 被调用");
 
                 var timestamp = DateTime.UtcNow.ToString("o"); // ISO8601
 
@@ -499,7 +519,7 @@ namespace HDTplugins
             }
             catch (Exception ex)
             {
-                Log.Error("[BGStats] 写入数据文件失败: " + ex.Message);
+                Log.Error("[Hank的log信息] 写入数据文件失败: " + ex.Message);
             }
         }
 
@@ -523,6 +543,57 @@ namespace HDTplugins
             {
                 return cardId;
             }
+        }
+
+        /// <summary>
+        /// 将 BG 英雄皮肤 CardId 归一化为“原始英雄 CardId”
+        /// 目标：统计时不要把同一英雄的不同皮肤当成不同英雄。
+        /// </summary>
+        private string NormalizeBgHeroId(string heroCardId)
+        {
+            if (string.IsNullOrEmpty(heroCardId))
+                return heroCardId;
+
+            // 1) 优先使用 HDT 内置工具（如果你的版本有）
+            //    用反射避免“没有这个类/方法”导致编译失败
+            try
+            {
+                var asm = typeof(Hearthstone_Deck_Tracker.Core).Assembly;
+
+                // 常见命名空间/类名：Hearthstone_Deck_Tracker.Hearthstone.BattlegroundsUtils
+                var t = asm.GetType("Hearthstone_Deck_Tracker.Hearthstone.BattlegroundsUtils");
+                if (t != null)
+                {
+                    var mi = t.GetMethod("GetOriginalHeroId", new[] { typeof(string) });
+                    if (mi != null)
+                    {
+                        var res = mi.Invoke(null, new object[] { heroCardId }) as string;
+                        if (!string.IsNullOrEmpty(res))
+                            return res;
+                    }
+                }
+            }
+            catch
+            {
+                // ignore，走兜底
+            }
+
+            // 2) 兜底：按字符串规则去皮肤后缀
+            //    常见：TB_BaconShop_HERO_34_SKIN_01 / ..._SKIN_123
+            //    也可能出现 ALT / HEROIC 等变体（不同版本可能不一样）
+            var s = heroCardId;
+
+            // 优先去掉 _SKIN_ 后面的所有内容
+            var idx = s.IndexOf("_SKIN_", StringComparison.OrdinalIgnoreCase);
+            if (idx > 0)
+                return s.Substring(0, idx);
+
+            // 其它可能的后缀（不一定都会遇到，安全兜底）
+            idx = s.IndexOf("_ALT_", StringComparison.OrdinalIgnoreCase);
+            if (idx > 0)
+                return s.Substring(0, idx);
+
+            return s;
         }
 
         /// <summary>
@@ -614,6 +685,126 @@ namespace HDTplugins
             {
                 return "";
             }
+        }
+
+        /// <summary>
+        /// 第一次识别到真实英雄时，写入 pending 记录（不含名次）。
+        /// 这样拔线/掉线也能保住英雄数据。
+        /// </summary>
+        private void WritePendingRecordIfNeeded()
+        {
+            try
+            {
+                if (_wrotePending) return;
+                if (string.IsNullOrEmpty(_pendingFilePath)) return;
+                if (string.IsNullOrEmpty(_currentHeroCardId)) return;
+
+                // 生成本局 matchId（够用且唯一）
+                _currentMatchId = Guid.NewGuid().ToString("N");
+                _wrotePending = true;
+
+                var timestamp = DateTime.UtcNow.ToString("o");
+                var heroId = _currentHeroCardId ?? "";
+                var heroName = GetHeroName(heroId);
+                var gameVersion = ""; // 你之前版本号解析一直不稳定，这里先留空，后面我们再补
+
+                // placement 用 -1 表示“未知/未完成”
+                var line =
+                    "{"
+                    + $"\"matchId\":\"{JsonEscape(_currentMatchId)}\","
+                    + $"\"timestamp\":\"{JsonEscape(timestamp)}\","
+                    + $"\"gameVersion\":\"{JsonEscape(gameVersion)}\","
+                    + $"\"heroCardId\":\"{JsonEscape(heroId)}\","
+                    + $"\"heroName\":\"{JsonEscape(heroName)}\","
+                    + $"\"placement\":-1"
+                    + "}";
+
+                File.AppendAllText(_pendingFilePath, line + Environment.NewLine, Encoding.UTF8);
+
+                Log.Info($"[BGStats] 已写入 pending 记录 matchId={_currentMatchId}");
+            }
+            catch (Exception ex)
+            {
+                Log.Error("[BGStats] 写入 pending 失败: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// 当名次确定时：
+        /// - 从 pending 中找到 matchId 对应记录
+        /// - 用最终 placement 改写那条记录并追加到 final
+        /// - 同时从 pending 移除该条
+        /// </summary>
+        private void FinalizeRecordIfPossible()
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(_currentMatchId)) return;
+                if (string.IsNullOrEmpty(_pendingFilePath) || string.IsNullOrEmpty(_finalFilePath)) return;
+
+                var duos = Core.Game.IsBattlegroundsDuosMatch;
+                var maxPlace = duos ? 4 : 8;
+                if (!(_lastValidPlacement >= 1 && _lastValidPlacement <= maxPlace))
+                    return; // 还没名次就不 finalize
+
+                if (!File.Exists(_pendingFilePath))
+                    return;
+
+                var lines = File.ReadAllLines(_pendingFilePath, Encoding.UTF8);
+                if (lines.Length == 0)
+                    return;
+
+                string target = null;
+                var kept = new System.Collections.Generic.List<string>(lines.Length);
+
+                foreach (var l in lines)
+                {
+                    if (string.IsNullOrWhiteSpace(l))
+                        continue;
+
+                    // 简单包含匹配：够用且快（matchId 是 GUID，不会误伤）
+                    if (target == null && l.Contains($"\"matchId\":\"{_currentMatchId}\""))
+                    {
+                        target = l;
+                    }
+                    else
+                    {
+                        kept.Add(l);
+                    }
+                }
+
+                if (target == null)
+                    return;
+
+                // 把 placement 从 -1 替换成最终名次（只替换第一次出现）
+                var finalized = ReplaceFirst(target, "\"placement\":-1", $"\"placement\":{_lastValidPlacement}");
+
+                // 追加到 final
+                File.AppendAllText(_finalFilePath, finalized + Environment.NewLine, Encoding.UTF8);
+
+                // 重写 pending（删掉已 finalize 的那条）
+                File.WriteAllLines(_pendingFilePath, kept.ToArray(), Encoding.UTF8);
+
+                Log.Info($"[BGStats] 已 finalize matchId={_currentMatchId}, placement={_lastValidPlacement}");
+            }
+            catch (Exception ex)
+            {
+                Log.Error("[BGStats] Finalize 失败: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// 只替换第一次出现的位置
+        /// </summary>
+        private static string ReplaceFirst(string text, string search, string replace)
+        {
+            if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(search))
+                return text;
+
+            var idx = text.IndexOf(search, StringComparison.Ordinal);
+            if (idx < 0) return text;
+
+            return text.Substring(0, idx) + replace + text.Substring(idx + search.Length);
         }
 
         private static bool SameArray(int[] a, int[] b)
