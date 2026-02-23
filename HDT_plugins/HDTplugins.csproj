@@ -51,6 +51,7 @@
     <Reference Include="WindowsBase" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Models\BgSnapshot.cs" />
     <Compile Include="Models\HeroArchive.cs" />
     <Compile Include="Models\HeroStats.cs" />
     <Compile Include="Plugin.cs" />
