@@ -367,19 +367,6 @@ namespace HDTplugins.Services
                 AnomalyDbfId = anomalyDbf;
 
                 var card = Database.GetCardFromDbfId(anomalyDbf);
-                AnomalyCardId = card?.Id;
-            }
-            catch (Exception ex)
-            {
-                HdtLog.Error("[BGStats] TryCacheAnomaly 失败: " + ex.Message);
-            }
-        }
-
-        private void TryCacheFinalBoard()
-        {
-            try
-            {
-                var board = Core.Game.Player?.Board;
                 if (board == null || !board.Any())
                     return;
 
@@ -540,7 +527,7 @@ namespace HDTplugins.Services
                 if (t == null)
                     return null;
 
-                var mi = t.GetMethod("GetAvailableRaces", BindingFlags.Public | BindingFlags.Static, null, System.Type.EmptyTypes, null);
+                var mi = t.GetMethod("GetAvailableRaces", BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null);
                 if (mi == null)
                     return null;
 

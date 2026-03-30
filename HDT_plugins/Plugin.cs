@@ -16,7 +16,9 @@ namespace HDTplugins
         public string Name => "Hank的酒馆数据分析";
         public string Description => "统计酒馆战棋英雄选择与排名";
         public string Author => "Hank";
+
         public Version Version => new Version(0, 5, 1);
+
         public string ButtonText => "酒馆数据分析";
         public MenuItem MenuItem => null;
 
