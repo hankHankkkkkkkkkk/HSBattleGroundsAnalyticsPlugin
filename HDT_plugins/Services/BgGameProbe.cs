@@ -1,12 +1,12 @@
 ﻿using HearthDb.Enums;
-using Hearthstone_Deck_Tracker;                 // ✅ 关键：Core 在这里
+using Hearthstone_Deck_Tracker;
 using Hearthstone_Deck_Tracker.Hearthstone;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
 
-// ✅ 强制使用 HDT 的 Log，避免冲突
 using HdtLog = Hearthstone_Deck_Tracker.Utility.Logging.Log;
 
 namespace HDTplugins.Services
@@ -44,6 +44,11 @@ namespace HDTplugins.Services
         public int RatingBefore { get; private set; } = -1;
         public int RatingAfter { get; private set; } = -1;
 
+        public string[] AvailableRaceNames { get; private set; } = Array.Empty<string>();
+        public int AnomalyDbfId { get; private set; } = 0;
+        public string AnomalyCardId { get; private set; }
+        public string[] FinalBoardCardIds { get; private set; } = Array.Empty<string>();
+
         private bool _needResolveRatingAfter;
         private long _ratingResolveStartTs;
         private const int RatingResolveTimeoutMs = 45_000;
@@ -71,6 +76,11 @@ namespace HDTplugins.Services
             RatingAfter = -1;
             _needResolveRatingAfter = false;
             _nextRatingPollTs = 0;
+
+            AvailableRaceNames = Array.Empty<string>();
+            AnomalyDbfId = 0;
+            AnomalyCardId = null;
+            FinalBoardCardIds = Array.Empty<string>();
         }
 
         public void OnGameEnd()
@@ -78,6 +88,7 @@ namespace HDTplugins.Services
             if (!_bgDetected) return;
 
             TryCachePlacement();
+            TryCacheFinalBoard();
 
             _needResolvePlacement = true;
 
@@ -112,6 +123,9 @@ namespace HDTplugins.Services
             }
 
             TryCachePlacement();
+            TryCacheAvailableRaces();
+            TryCacheAnomaly();
+            TryCacheFinalBoard();
 
             if (_needResolveOfferedHeroes)
                 TryResolveOfferedHeroes(nowTs);
@@ -310,6 +324,82 @@ namespace HDTplugins.Services
             }
         }
 
+        private void TryCacheAvailableRaces()
+        {
+            try
+            {
+                var races = TryGetAvailableRacesFromHdtUtils();
+                if (races == null || races.Count == 0)
+                    return;
+
+                var raceNames = races
+                    .Where(r => r != Race.INVALID)
+                    .Select(r => r.ToString())
+                    .OrderBy(x => x, StringComparer.Ordinal)
+                    .ToArray();
+
+                if (raceNames.Length == 0 || SameArray(raceNames, AvailableRaceNames))
+                    return;
+
+                AvailableRaceNames = raceNames;
+            }
+            catch (Exception ex)
+            {
+                HdtLog.Error("[BGStats] TryCacheAvailableRaces 失败: " + ex.Message);
+            }
+        }
+
+        private void TryCacheAnomaly()
+        {
+            try
+            {
+                if (AnomalyDbfId > 0)
+                    return;
+
+                var entity = Core.Game?.GameEntity;
+                if (entity == null)
+                    return;
+
+                var anomalyDbf = entity.GetTag(GameTag.BACON_GLOBAL_ANOMALY_DBID);
+                if (anomalyDbf <= 0)
+                    return;
+
+                AnomalyDbfId = anomalyDbf;
+
+                var card = HearthDb.Database.GetCardFromDbfId(anomalyDbf);
+                AnomalyCardId = card?.Id;
+            }
+            catch (Exception ex)
+            {
+                HdtLog.Error("[BGStats] TryCacheAnomaly 失败: " + ex.Message);
+            }
+        }
+
+        private void TryCacheFinalBoard()
+        {
+            try
+            {
+                var board = Core.Game.Player?.Board;
+                if (board == null || board.Count == 0)
+                    return;
+
+                var list = board
+                    .Where(e => e != null && !string.IsNullOrEmpty(e.CardId))
+                    .OrderBy(e => e.ZonePosition)
+                    .Select(e => e.CardId)
+                    .ToArray();
+
+                if (list.Length == 0)
+                    return;
+
+                FinalBoardCardIds = list;
+            }
+            catch (Exception ex)
+            {
+                HdtLog.Error("[BGStats] TryCacheFinalBoard 失败: " + ex.Message);
+            }
+        }
+
         private void TryResolveRatingAfter(long nowTs)
         {
             if (nowTs < _nextRatingPollTs) return;
@@ -441,6 +531,38 @@ namespace HDTplugins.Services
             return null;
         }
 
+        private HashSet<Race> TryGetAvailableRacesFromHdtUtils()
+        {
+            try
+            {
+                var asm = typeof(Hearthstone_Deck_Tracker.Core).Assembly;
+                var t = asm.GetType("Hearthstone_Deck_Tracker.Hearthstone.BattlegroundsUtils");
+                if (t == null)
+                    return null;
+
+                var mi = t.GetMethod("GetAvailableRaces", BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null);
+                if (mi == null)
+                    return null;
+
+                var val = mi.Invoke(null, null);
+                if (val is HashSet<Race> direct)
+                    return direct;
+
+                if (val is System.Collections.IEnumerable e)
+                {
+                    var result = new HashSet<Race>();
+                    foreach (var item in e)
+                    {
+                        if (item is Race r)
+                            result.Add(r);
+                    }
+                    return result;
+                }
+            }
+            catch { }
+            return null;
+        }
+
         private string NormalizeBgHeroId(string heroCardId)
         {
             if (string.IsNullOrEmpty(heroCardId))
@@ -483,6 +605,16 @@ namespace HDTplugins.Services
             if (a.Length != b.Length) return false;
             for (int i = 0; i < a.Length; i++)
                 if (a[i] != b[i]) return false;
+            return true;
+        }
+
+        private static bool SameArray(string[] a, string[] b)
+        {
+            if (ReferenceEquals(a, b)) return true;
+            if (a == null || b == null) return false;
+            if (a.Length != b.Length) return false;
+            for (int i = 0; i < a.Length; i++)
+                if (!string.Equals(a[i], b[i], StringComparison.Ordinal)) return false;
             return true;
         }
     }

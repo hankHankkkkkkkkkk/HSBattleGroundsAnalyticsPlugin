@@ -1,8 +1,10 @@
 ﻿using Hearthstone_Deck_Tracker.API;
 using Hearthstone_Deck_Tracker.Plugins;
 using System;
+using System.Windows;
 using System.Windows.Controls;
 using HDTplugins.Services;
+using HDTplugins.Views;
 
 // 强制使用 HDT 的 Log，避免和你 Services/Log.cs 冲突
 using HdtLog = Hearthstone_Deck_Tracker.Utility.Logging.Log;
@@ -14,8 +16,8 @@ namespace HDTplugins
         public string Name => "Hank的酒馆数据分析";
         public string Description => "统计酒馆战棋英雄选择与排名";
         public string Author => "Hank";
-        public Version Version => new Version(0, 3, 1);
-        public string ButtonText => "设置";
+        public Version Version => new Version(0, 4, 0);
+        public string ButtonText => "酒馆数据分析";
         public MenuItem MenuItem => null;
 
         private bool _finalizedThisMatch = false;
@@ -24,6 +26,7 @@ namespace HDTplugins
 
         private BgGameProbe _probe;
         private StatsStore _store;
+        private BgStatsWindow _statsWindow;
 
         public void OnLoad()
         {
@@ -44,12 +47,25 @@ namespace HDTplugins
         public void OnUnload()
         {
             _enabled = false;
+            TryCloseWindow();
             HdtLog.Info("[Hank的log信息] 插件已卸载（已关闭开关）");
         }
 
         public void OnButtonPress()
         {
-            HdtLog.Info("[Hank的log信息] 点击了设置按钮");
+            if (_statsWindow == null)
+            {
+                _statsWindow = new BgStatsWindow(_store.FinalFilePath);
+                _statsWindow.Owner = Application.Current?.MainWindow;
+                _statsWindow.OpenMatchDetailRequested += OnOpenMatchDetailRequested;
+                _statsWindow.Closed += (_, __) => _statsWindow = null;
+            }
+
+            _statsWindow.Reload();
+            _statsWindow.Show();
+            _statsWindow.Activate();
+
+            HdtLog.Info("[Hank的log信息] 打开了酒馆数据分析窗口");
         }
 
         public void OnUpdate()
@@ -80,16 +96,21 @@ namespace HDTplugins
                 && _probe.HasResolvedPlacement
                 && _probe.HasResolvedRatingAfter)
             {
-                // 可选：必须变化才写
-                if (_probe.RatingBefore > 0 && _probe.RatingAfter > 0 && _probe.RatingAfter == _probe.RatingBefore)
-                    return;
-
                 _store.FinalizeIfPossible(
                     matchId: _store.CurrentMatchId,
+                    timestamp: _store.CurrentMatchTimestampUtc,
+                    heroCardId: _probe.HeroCardId,
+                    heroSkinCardId: _probe.HeroSkinCardId,
+                    heroPowerCardId: _probe.HeroPowerCardId,
                     placement: _probe.Placement,
                     ratingBefore: _probe.RatingBefore,
-                    ratingAfter: _probe.RatingAfter
+                    ratingAfter: _probe.RatingAfter,
+                    availableRaces: _probe.AvailableRaceNames,
+                    anomalyCardId: _probe.AnomalyCardId,
+                    finalBoardCardIds: _probe.FinalBoardCardIds
                 );
+
+                _statsWindow?.Reload();
 
                 // 标记本局完成 + 停止轮询
                 _finalizedThisMatch = true;
@@ -116,6 +137,21 @@ namespace HDTplugins
 
             if (_probe.IsBattlegrounds)
                 HdtLog.Info("[Hank的log信息] 对局结束：进入等待名次 + 赛后分数状态");
+        }
+
+        private void OnOpenMatchDetailRequested(string matchId)
+        {
+            HdtLog.Info($"[BGStats] 请求打开对局详情（待开发）matchId={matchId}");
+        }
+
+        private void TryCloseWindow()
+        {
+            try
+            {
+                _statsWindow?.Close();
+                _statsWindow = null;
+            }
+            catch { }
         }
     }
 }
