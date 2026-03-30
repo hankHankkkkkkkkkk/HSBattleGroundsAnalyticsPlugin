@@ -26,6 +26,8 @@ namespace HDTplugins.Services
         public string CurrentMatchTimestampUtc { get; private set; }
         public bool PendingWritten { get; private set; }
 
+        public string FinalFilePath => _finalFilePath;
+
         public void Initialize()
         {
             try
