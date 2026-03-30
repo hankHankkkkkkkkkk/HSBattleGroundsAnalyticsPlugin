@@ -13,6 +13,7 @@
     <FileAlignment>512</FileAlignment>
     <Deterministic>true</Deterministic>
     <TargetFrameworkProfile />
+    <PlatformTarget>x86</PlatformTarget>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
@@ -51,6 +52,7 @@
     <Reference Include="WindowsBase" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Models\BgMatchRow.cs" />
     <Compile Include="Models\BgSnapshot.cs" />
     <Compile Include="Models\HeroArchive.cs" />
     <Compile Include="Models\HeroStats.cs" />
@@ -61,6 +63,7 @@
     <Compile Include="Services\HeroStatsService.cs" />
     <Compile Include="Services\Log.cs" />
     <Compile Include="Services\StatsStore.cs" />
+    <Compile Include="Views\BgStatsWindow.cs" />
     <Compile Include="Views\SettingsView.cs" />
   </ItemGroup>
   <ItemGroup>
