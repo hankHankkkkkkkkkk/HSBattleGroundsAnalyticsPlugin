@@ -80,15 +80,18 @@ namespace HDTplugins
                 && _probe.HasResolvedPlacement
                 && _probe.HasResolvedRatingAfter)
             {
-                // 可选：必须变化才写
-                if (_probe.RatingBefore > 0 && _probe.RatingAfter > 0 && _probe.RatingAfter == _probe.RatingBefore)
-                    return;
-
                 _store.FinalizeIfPossible(
                     matchId: _store.CurrentMatchId,
+                    timestamp: _store.CurrentMatchTimestampUtc,
+                    heroCardId: _probe.HeroCardId,
+                    heroSkinCardId: _probe.HeroSkinCardId,
+                    heroPowerCardId: _probe.HeroPowerCardId,
                     placement: _probe.Placement,
                     ratingBefore: _probe.RatingBefore,
-                    ratingAfter: _probe.RatingAfter
+                    ratingAfter: _probe.RatingAfter,
+                    availableRaces: _probe.AvailableRaceNames,
+                    anomalyCardId: _probe.AnomalyCardId,
+                    finalBoardCardIds: _probe.FinalBoardCardIds
                 );
 
                 // 标记本局完成 + 停止轮询
