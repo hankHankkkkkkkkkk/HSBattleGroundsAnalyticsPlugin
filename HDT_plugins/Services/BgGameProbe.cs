@@ -366,7 +366,7 @@ namespace HDTplugins.Services
 
                 AnomalyDbfId = anomalyDbf;
 
-                var card = HearthDb.Database.GetCardFromDbfId(anomalyDbf);
+                var card = HearthDb.Cards.GetFromDbfId(anomalyDbf);
                 AnomalyCardId = card?.Id;
             }
             catch (Exception ex)
@@ -380,7 +380,7 @@ namespace HDTplugins.Services
             try
             {
                 var board = Core.Game.Player?.Board;
-                if (board == null || board.Count == 0)
+                if (board == null || !board.Any())
                     return;
 
                 var list = board
@@ -540,7 +540,7 @@ namespace HDTplugins.Services
                 if (t == null)
                     return null;
 
-                var mi = t.GetMethod("GetAvailableRaces", BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null);
+                var mi = t.GetMethod("GetAvailableRaces", BindingFlags.Public | BindingFlags.Static, null, global::System.Type.EmptyTypes, null);
                 if (mi == null)
                     return null;
 
