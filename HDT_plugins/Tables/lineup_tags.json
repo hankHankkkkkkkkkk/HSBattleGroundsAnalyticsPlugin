@@ -1,0 +1,124 @@
+﻿// lineup_tags.json 支持手动维护可选 TAG 和自动识别规则。
+// 注释写法：仅支持整行 // 注释，请不要把注释放在 JSON 行尾。
+// 规则结构说明：
+// 1. availableTags: 可在详情页下拉中手动添加的 TAG 列表。
+// 2. rules: 自动识别规则列表，命中后会自动追加 TAG，最多取优先级最高的 3 个。
+// 3. conditions 支持两类写法：
+//    A. 组合条件：{ "op": "all" | "any", "items": [ ... ] }
+//    B. 原子条件：{ "type": "minionRaceCountAtLeast", "race": "MECHANICAL", "value": 4 }
+// 可用 type：
+// - minionRaceCountAtLeast: 终局阵容中某种族数量至少 value
+// - cardIdExists: 终局阵容中存在指定 cardId
+// - cardIdCountAtLeast: 终局阵容中 cardId 或 cardIds 的总数量至少 value
+// - goldenCountAtLeast: 终局阵容中金色随从数量至少 value
+// - heroIs: 英雄 cardId 等于 heroCardId
+// - heroPowerIs: 终局英雄技能 cardId 等于 heroPowerCardId
+// - tavernTierAtLeast: 本局曾到达的最高酒馆等级至少 value
+// - totalMinionsAtLeast: 终局阵容随从数量至少 value
+// - keywordCountAtLeast: 带指定关键词(keyword)的随从数量至少 value，keyword 可写 taunt/divineshield/poisonous/reborn/windfury/megawindfury/stealth/cleave
+{
+  "availableTags": [
+    "机械",
+    "亡灵",
+    "龙",
+    "海盗",
+    "野兽",
+    "元素",
+    "恶魔",
+    "鱼人",
+    "娜迦",
+    "下毒",
+    "金铜须",
+    "金瑞文",
+    "",
+    "",
+    "",
+    "",
+    ""
+    ],
+
+  "rules": [
+    {
+      "tag": "机械",
+      "priority": 100,
+      "conditions": {
+        "type": "minionRaceCountAtLeast",
+        "race": "MECHANICAL",
+        "value": 4
+      }
+    },
+    {
+      "tag": "恶魔",
+      "priority": 100,
+      "conditions": {
+        "type": "minionRaceCountAtLeast",
+        "race": "DEMON",
+        "value": 4
+      }
+    },
+    {
+      "tag": "鱼人",
+      "priority": 100,
+      "conditions": {
+        "type": "minionRaceCountAtLeast",
+        "race": "MURLOC",
+        "value": 4
+      }
+    },
+    {
+      "tag": "海盗",
+      "priority": 100,
+      "conditions": {
+        "type": "minionRaceCountAtLeast",
+        "race": "PIRATE",
+        "value": 4
+      }
+    },
+    {
+      "tag": "龙",
+      "priority": 100,
+      "conditions": {
+        "type": "minionRaceCountAtLeast",
+        "race": "DRAGON",
+        "value": 4
+      }
+    },
+    {
+      "tag": "亡灵",
+      "priority": 100,
+      "conditions": {
+        "type": "minionRaceCountAtLeast",
+        "race": "UNDEAD",
+        "value": 4
+      }
+    },
+    {
+      "tag": "野兽",
+      "priority": 100,
+      "conditions": {
+        "type": "minionRaceCountAtLeast",
+        "race": "",
+        "value": 4
+      }
+    },
+    {
+      "tag": "元素",
+      "priority": 100,
+      "conditions": {
+        "type": "minionRaceCountAtLeast",
+        "race": "ELEMENT",
+        "value": 4
+      }
+    },
+    {
+      "tag": "娜迦",
+      "priority": 100,
+      "conditions": {
+        "type": "minionRaceCountAtLeast",
+        "race": "NAGA",
+        "value": 4
+      }
+    }
+  ]
+
+}

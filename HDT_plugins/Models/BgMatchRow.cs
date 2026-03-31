@@ -1,4 +1,6 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Windows.Media;
 
 namespace HDTplugins.Models
@@ -15,6 +17,7 @@ namespace HDTplugins.Models
         public string HeroName { get; set; }
         public string AnomalyDisplay { get; set; }
         public string FinalBoardDisplay { get; set; }
+        public List<string> Tags { get; set; } = new List<string>();
 
         public string RatingDeltaText
         {
@@ -37,5 +40,7 @@ namespace HDTplugins.Models
                 return Brushes.Gray;
             }
         }
+
+        public string TagsDisplay => Tags == null || Tags.Count == 0 ? string.Empty : string.Join(" / ", Tags.Take(5));
     }
 }

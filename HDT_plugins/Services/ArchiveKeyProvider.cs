@@ -27,7 +27,7 @@ namespace HDTplugins.Services
             return Clone(KnownArchives[0]);
         }
 
-        public static ArchiveVersionInfo ResolveCurrentArchive()
+        public static ArchiveVersionInfo ResolveCurrentArchive(Func<string, string> mapDisplayName)
         {
             var detectedPatch = TryDetectHearthstonePatchVersion();
             if (string.IsNullOrEmpty(detectedPatch))
@@ -36,21 +36,32 @@ namespace HDTplugins.Services
             if (!IsReasonablePatchVersion(detectedPatch))
                 return GetDefaultArchive();
 
+            var mappedDisplayName = mapDisplayName == null ? null : mapDisplayName(detectedPatch);
             var matched = KnownArchives.FirstOrDefault(x => detectedPatch.StartsWith(x.PatchVersion, StringComparison.OrdinalIgnoreCase));
             if (matched != null)
             {
                 var info = Clone(matched);
+                if (!string.IsNullOrWhiteSpace(mappedDisplayName))
+                    info.DisplayName = mappedDisplayName;
+                info.Key = BuildArchiveKeyFromRawVersion(detectedPatch, info.DisplayName);
                 info.IsDetected = true;
                 return info;
             }
 
             return new ArchiveVersionInfo
             {
-                Key = BuildArchiveKey("patch" + detectedPatch),
-                DisplayName = "patch" + detectedPatch,
+                Key = BuildArchiveKeyFromRawVersion(detectedPatch, mappedDisplayName),
+                DisplayName = string.IsNullOrWhiteSpace(mappedDisplayName) ? "patch" + detectedPatch : mappedDisplayName,
                 PatchVersion = detectedPatch,
                 IsDetected = true
             };
+        }
+
+        public static string BuildArchiveKeyFromRawVersion(string rawVersion, string fallbackDisplayName)
+        {
+            if (!string.IsNullOrWhiteSpace(rawVersion))
+                return "version_" + Regex.Replace(rawVersion.Trim().ToLowerInvariant(), "[^a-z0-9]+", "_").Trim('_');
+            return BuildArchiveKey(fallbackDisplayName);
         }
 
         public static ArchiveVersionInfo CreateFromStoredLabel(string key, string displayName)

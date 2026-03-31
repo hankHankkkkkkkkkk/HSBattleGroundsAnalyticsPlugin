@@ -16,15 +16,18 @@ namespace HDTplugins
         public string Name => "Hank的酒馆数据分析";
         public string Description => "统计酒馆战棋英雄选择与排名";
         public string Author => "Hank";
-        public Version Version => new Version(0, 6, 2);
-        public string ButtonText => "酒馆数据分析";
-        public MenuItem MenuItem => null;
+        public Version Version => new Version(0, 7, 3);
+        public string ButtonText => "设置";
+        public MenuItem MenuItem => _menuItem;
 
         private bool _finalizedThisMatch;
         private bool _enabled;
         private BgGameProbe _probe;
         private StatsStore _store;
+        private PluginSettingsService _settingsService;
         private BgStatsWindow _statsWindow;
+        private SettingsView _settingsView;
+        private MenuItem _menuItem;
 
         public void OnLoad()
         {
@@ -33,12 +36,16 @@ namespace HDTplugins
 
             _store = new StatsStore();
             _store.Initialize();
+            _settingsService = new PluginSettingsService();
+            _settingsService.Initialize(_store.TablesDirectoryPath);
             _probe = new BgGameProbe();
+            _menuItem = CreateQuickOpenMenuItem();
 
             GameEvents.OnGameStart.Add(OnGameStart);
             GameEvents.OnGameEnd.Add(OnGameEnd);
 
-            ShowWindowAsync();
+            if (_settingsService.Settings.AutoOpenOnStartup)
+                ShowWindowAsync();
             HdtLog.Info("[Hank的log信息] 插件已加载（已订阅事件，GUI 自动启动）");
         }
 
@@ -51,7 +58,7 @@ namespace HDTplugins
 
         public void OnButtonPress()
         {
-            ShowWindow();
+            ShowSettingsWindow();
         }
 
         public void OnUpdate()
@@ -64,12 +71,25 @@ namespace HDTplugins
 
             if (_probe.HasResolvedHero && !_store.PendingWritten)
             {
-                _store.WritePendingIfNeeded(_probe.HeroCardId, _probe.HeroSkinCardId, _probe.HeroPowerCardId, _probe.RatingBefore);
+                _store.WritePendingIfNeeded(_probe.HeroCardId, _probe.HeroSkinCardId, _probe.InitialHeroPowerCardId, _probe.RatingBefore);
             }
 
             if (_store.PendingWritten && _probe.HasResolvedPlacement && _probe.HasResolvedRatingAfter)
             {
-                _store.FinalizeIfPossible(_store.CurrentMatchId, _store.CurrentMatchTimestampUtc, _probe.HeroCardId, _probe.HeroSkinCardId, _probe.HeroPowerCardId, _probe.Placement, _probe.RatingBefore, _probe.RatingAfter, _probe.AvailableRaceNames, _probe.AnomalyCardId, _probe.FinalBoardCardIds);
+                _store.FinalizeIfPossible(
+                    _store.CurrentMatchId,
+                    _store.CurrentMatchTimestampUtc,
+                    _probe.HeroCardId,
+                    _probe.HeroSkinCardId,
+                    _probe.InitialHeroPowerCardId,
+                    _probe.HeroPowerCardId,
+                    _probe.Placement,
+                    _probe.RatingBefore,
+                    _probe.RatingAfter,
+                    _probe.AvailableRaceNames,
+                    _probe.AnomalyCardId,
+                    _probe.FinalBoard,
+                    _probe.TavernUpgradeTimeline);
                 _statsWindow?.Reload();
                 _finalizedThisMatch = true;
                 _probe.StopFinalizePolling();
@@ -95,7 +115,7 @@ namespace HDTplugins
 
         private void OnOpenMatchDetailRequested(string matchId)
         {
-            HdtLog.Info($"[BGStats] 请求打开对局详情（待开发）matchId={matchId}");
+            HdtLog.Info($"[BGStats] 请求打开对局详情 matchId={matchId}");
         }
 
         private void ShowWindowAsync()
@@ -117,6 +137,39 @@ namespace HDTplugins
             _statsWindow.SyncVersionSelection(_store.CurrentArchive?.Key);
             _statsWindow.Show();
             _statsWindow.Activate();
+        }
+
+        private MenuItem CreateQuickOpenMenuItem()
+        {
+            var item = new MenuItem
+            {
+                Header = "酒馆数据分析"
+            };
+            item.Click += delegate { ShowWindow(); };
+            return item;
+        }
+
+        private void ShowSettingsWindow()
+        {
+            if (_settingsService == null)
+                return;
+
+            _settingsService.Reload();
+            if (_settingsView == null)
+            {
+                _settingsView = new SettingsView(_settingsService);
+                _settingsView.Closed += delegate { _settingsView = null; };
+            }
+
+            try
+            {
+                var owner = Application.Current?.MainWindow;
+                if (owner != null && !ReferenceEquals(owner, _settingsView))
+                    _settingsView.Owner = owner;
+            }
+            catch { }
+
+            _settingsView.ShowDialog();
         }
 
         private void TryAttachOwner()
