@@ -1,4 +1,5 @@
 ﻿using HDTplugins.Models;
+using HearthDb;
 using HearthDb.Enums;
 using Hearthstone_Deck_Tracker;
 using Hearthstone_Deck_Tracker.Hearthstone;
@@ -29,6 +30,8 @@ namespace HDTplugins.Services
         private long _nextRatingPollTs;
         private int _lastRecordedTavernTier;
         private int _lastObservedRawTurn;
+        private Step _lastObservedStep = Step.INVALID;
+        private bool _combatSnapshotCapturedThisFight;
 
         private const int RatingResolveTimeoutMs = 45_000;
         private const int RatingPollMs = 500;
@@ -77,6 +80,8 @@ namespace HDTplugins.Services
             TavernUpgradeTimeline = new List<BgTavernUpgradePoint>();
             _lastRecordedTavernTier = -1;
             _lastObservedRawTurn = -1;
+            _lastObservedStep = Step.INVALID;
+            _combatSnapshotCapturedThisFight = false;
         }
 
         public void OnGameEnd()
@@ -122,6 +127,7 @@ namespace HDTplugins.Services
             TryCacheAvailableRaces();
             TryCacheAnomaly();
             TryUpdateTurnScopedSnapshots();
+            TryCapturePreCombatSnapshot();
 
             if (_needResolveOfferedHeroes)
                 TryResolveOfferedHeroes(nowTs);
@@ -233,25 +239,135 @@ namespace HDTplugins.Services
         {
             try
             {
-                var playerEntity = Core.Game.PlayerEntity;
-                if (playerEntity == null)
-                    return;
-
-                var heroPowerEntityId = playerEntity.GetTag(GameTag.HERO_POWER);
-                if (heroPowerEntityId <= 0 || !Core.Game.Entities.ContainsKey(heroPowerEntityId))
-                    return;
-
-                var hpCardId = Core.Game.Entities[heroPowerEntityId]?.CardId;
+                var previousHeroPower = HeroPowerCardId;
+                var hpCardId = ResolveHeroPowerCardId(out var source);
                 if (string.IsNullOrEmpty(hpCardId))
+                {
+                    HdtLog.Info("[BGStats][HeroPower] 本次未读取到英雄技能");
                     return;
+                }
 
                 HeroPowerCardId = hpCardId;
                 if (string.IsNullOrEmpty(InitialHeroPowerCardId))
+                {
                     InitialHeroPowerCardId = hpCardId;
+                    HdtLog.Info($"[BGStats][HeroPower] 记录初始英雄技能: {InitialHeroPowerCardId} (source={source})");
+                }
+
+                if (!string.Equals(previousHeroPower, HeroPowerCardId, StringComparison.OrdinalIgnoreCase))
+                    HdtLog.Info($"[BGStats][HeroPower] 英雄技能更新: {previousHeroPower ?? "null"} -> {HeroPowerCardId} (source={source})");
             }
             catch (Exception ex)
             {
                 HdtLog.Error("[BGStats] TryRefreshHeroPower 失败: " + ex.Message);
+            }
+        }
+
+        private string ResolveHeroPowerCardId(out string source)
+        {
+            var fromPlayerHeroPower = GetHeroPowerFromPlayerView();
+            if (!string.IsNullOrEmpty(fromPlayerHeroPower))
+            {
+                source = "Player.HeroPower";
+                return fromPlayerHeroPower;
+            }
+
+            var fromPlayerEntity = GetHeroPowerFromPlayerEntity();
+            if (!string.IsNullOrEmpty(fromPlayerEntity))
+            {
+                source = "PlayerEntity.HERO_POWER";
+                return fromPlayerEntity;
+            }
+
+            var fromHeroEntity = GetHeroPowerFromHeroEntity();
+            if (!string.IsNullOrEmpty(fromHeroEntity))
+            {
+                source = "HeroEntity.HERO_POWER";
+                return fromHeroEntity;
+            }
+
+            source = "unresolved";
+            return null;
+        }
+
+        private string GetHeroPowerFromPlayerView()
+        {
+            try
+            {
+                var heroPower = GetPropertyValue(Core.Game.Player, "HeroPower");
+                var heroPowerCardId = GetStringProperty(heroPower, "CardId");
+                if (!string.IsNullOrEmpty(heroPowerCardId))
+                    return heroPowerCardId;
+
+                var card = GetPropertyValue(heroPower, "Card");
+                return GetStringProperty(card, "Id");
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private string GetHeroPowerFromPlayerEntity()
+        {
+            try
+            {
+                var playerEntity = Core.Game.PlayerEntity;
+                if (playerEntity == null)
+                    return null;
+
+                var heroPowerEntityId = playerEntity.GetTag(GameTag.HERO_POWER);
+                if (heroPowerEntityId <= 0 || !Core.Game.Entities.ContainsKey(heroPowerEntityId))
+                    return null;
+
+                var heroPowerEntity = Core.Game.Entities[heroPowerEntityId];
+                var hpCardId = GetStringProperty(heroPowerEntity, "CardId");
+                if (!string.IsNullOrEmpty(hpCardId))
+                    return hpCardId;
+
+                var card = GetPropertyValue(heroPowerEntity, "Card");
+                return GetStringProperty(card, "Id");
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private string GetHeroPowerFromHeroEntity()
+        {
+            try
+            {
+                var playerEntity = Core.Game.PlayerEntity;
+                if (playerEntity == null)
+                    return null;
+
+                var heroEntityId = playerEntity.GetTag(GameTag.HERO_ENTITY);
+                if (heroEntityId <= 0 || !Core.Game.Entities.ContainsKey(heroEntityId))
+                    return null;
+
+                var heroEntity = Core.Game.Entities[heroEntityId];
+                var heroPowerEntityId = 0;
+                try
+                {
+                    heroPowerEntityId = heroEntity.GetTag(GameTag.HERO_POWER);
+                }
+                catch { }
+
+                if (heroPowerEntityId <= 0 || !Core.Game.Entities.ContainsKey(heroPowerEntityId))
+                    return null;
+
+                var heroPowerEntity = Core.Game.Entities[heroPowerEntityId];
+                var hpCardId = GetStringProperty(heroPowerEntity, "CardId");
+                if (!string.IsNullOrEmpty(hpCardId))
+                    return hpCardId;
+
+                var card = GetPropertyValue(heroPowerEntity, "Card");
+                return GetStringProperty(card, "Id");
+            }
+            catch
+            {
+                return null;
             }
         }
 
@@ -359,7 +475,6 @@ namespace HDTplugins.Services
                     return;
 
                 _lastObservedRawTurn = rawTurn;
-                TryCacheFinalBoard();
                 TryCacheTavernUpgrade(rawTurn);
             }
             catch (Exception ex)
@@ -368,15 +483,45 @@ namespace HDTplugins.Services
             }
         }
 
+        private void TryCapturePreCombatSnapshot()
+        {
+            try
+            {
+                var currentStep = (Step)(Core.Game?.GameEntity?.GetTag(GameTag.STEP) ?? 0);
+                if (currentStep == _lastObservedStep && !(IsCombatPreparationStep(currentStep) && !_combatSnapshotCapturedThisFight))
+                    return;
+
+                var wasCombatPreparation = IsCombatPreparationStep(_lastObservedStep);
+                var isCombatPreparation = IsCombatPreparationStep(currentStep);
+                if (!isCombatPreparation)
+                    _combatSnapshotCapturedThisFight = false;
+
+                var shouldCapture = isCombatPreparation && (!_combatSnapshotCapturedThisFight || !wasCombatPreparation);
+                _lastObservedStep = currentStep;
+                if (!shouldCapture)
+                    return;
+
+                TryCachePreCombatSnapshot();
+            }
+            catch (Exception ex)
+            {
+                HdtLog.Error("[BGStats] TryCapturePreCombatSnapshot 失败: " + ex.Message);
+            }
+        }
+
+        private void TryCachePreCombatSnapshot()
+        {
+            TryRefreshHeroPower();
+            TryCacheFinalBoard();
+            _combatSnapshotCapturedThisFight = FinalBoard.Count > 0 || !string.IsNullOrWhiteSpace(HeroPowerCardId);
+            HdtLog.Info($"[BGStats] 已在进入战斗前记录当前阵容与英雄技能，step={_lastObservedStep}, boardCount={FinalBoard.Count}, heroPower={HeroPowerCardId ?? "null"}");
+        }
+
         private void TryCacheFinalBoard()
         {
             try
             {
-                var board = Core.Game.Player?.Board;
-                if (board == null || !board.Any())
-                    return;
-
-                var list = board
+                var list = GetLiveBoardEntities()
                     .Where(e => e != null && e.IsMinion && !string.IsNullOrEmpty(e.CardId))
                     .OrderBy(e => e.ZonePosition)
                     .Select(BuildBoardMinionSnapshot)
@@ -426,22 +571,61 @@ namespace HDTplugins.Services
             return rawTurn <= 0 ? 0 : (rawTurn + 1) / 2;
         }
 
+        private IEnumerable<dynamic> GetLiveBoardEntities()
+        {
+            var playerEntities = Core.Game.Player?.PlayerEntities;
+            if (playerEntities != null)
+            {
+                var fromEntities = playerEntities
+                    .Where(e => e != null && e.IsMinion && GetZone(e) == Zone.PLAY && !string.IsNullOrEmpty((string)e.CardId))
+                    .OrderBy(e => e.ZonePosition)
+                    .ToList();
+                if (fromEntities.Count > 0)
+                    return fromEntities;
+            }
+
+            var board = Core.Game.Player?.Board;
+            return board == null
+                ? Enumerable.Empty<dynamic>()
+                : board.Where(e => e != null).OrderBy(e => e.ZonePosition).ToList();
+        }
+
+        private static bool IsCombatPreparationStep(Step step)
+        {
+            return step == Step.MAIN_READY
+                || step == Step.MAIN_START
+                || step == Step.MAIN_START_TRIGGERS
+                || step == Step.MAIN_COMBAT;
+        }
+
+        private Zone GetZone(dynamic entity)
+        {
+            try
+            {
+                var raw = entity.GetTag(GameTag.ZONE);
+                return Enum.IsDefined(typeof(Zone), raw) ? (Zone)raw : Zone.INVALID;
+            }
+            catch
+            {
+                return Zone.INVALID;
+            }
+        }
+
         private BgBoardMinionSnapshot BuildBoardMinionSnapshot(dynamic entity)
         {
             try
             {
-                if (entity == null || string.IsNullOrEmpty((string)entity.CardId))
+                var cardId = GetStringProperty(entity, "CardId");
+                if (entity == null || string.IsNullOrEmpty(cardId))
                     return null;
 
-                var card = entity.Card;
-                var race = card != null && card.Race != Race.INVALID ? card.Race.ToString() : string.Empty;
                 return new BgBoardMinionSnapshot
                 {
-                    CardId = entity.CardId,
-                    Name = card?.Name ?? entity.CardId,
+                    CardId = cardId,
+                    Name = GetCardName(entity, cardId),
                     IsGolden = GetNamedTagValue(entity, "PREMIUM") > 0,
-                    Race = race,
-                    Position = entity.ZonePosition,
+                    Race = GetCardRace(entity, cardId),
+                    Position = GetIntProperty(entity, "ZonePosition"),
                     Attack = GetNamedTagValue(entity, "ATK"),
                     Health = GetNamedTagValue(entity, "HEALTH"),
                     Keywords = new BgKeywordState
@@ -464,6 +648,53 @@ namespace HDTplugins.Services
             }
         }
 
+        private string GetCardName(dynamic entity, string cardId)
+        {
+            try
+            {
+                var card = GetPropertyValue(entity, "Card");
+                var name = GetStringProperty(card, "Name");
+                if (!string.IsNullOrWhiteSpace(name))
+                    return name;
+            }
+            catch { }
+
+            try
+            {
+                return Cards.All.Values.FirstOrDefault(x => string.Equals(x.Id, cardId, StringComparison.OrdinalIgnoreCase))?.Name ?? cardId;
+            }
+            catch
+            {
+                return cardId;
+            }
+        }
+
+        private string GetCardRace(dynamic entity, string cardId)
+        {
+            try
+            {
+                var card = GetPropertyValue(entity, "Card");
+                var raceValue = GetPropertyValue(card, "Race");
+                if (raceValue is Race race && race != Race.INVALID)
+                    return race.ToString();
+
+                var raceText = raceValue?.ToString();
+                if (!string.IsNullOrWhiteSpace(raceText) && !string.Equals(raceText, Race.INVALID.ToString(), StringComparison.OrdinalIgnoreCase))
+                    return raceText;
+            }
+            catch { }
+
+            try
+            {
+                var dbCard = Cards.All.Values.FirstOrDefault(x => string.Equals(x.Id, cardId, StringComparison.OrdinalIgnoreCase));
+                return dbCard != null && dbCard.Race != Race.INVALID ? dbCard.Race.ToString() : string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
         private int GetNamedTagValue(dynamic entity, string tagName)
         {
             try
@@ -480,6 +711,37 @@ namespace HDTplugins.Services
             }
         }
 
+
+        private object GetPropertyValue(object target, string propertyName)
+        {
+            try
+            {
+                if (target == null || string.IsNullOrWhiteSpace(propertyName))
+                    return null;
+
+                var prop = target.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
+                return prop?.GetValue(target, null);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private string GetStringProperty(object target, string propertyName)
+        {
+            return GetPropertyValue(target, propertyName)?.ToString() ?? string.Empty;
+        }
+
+        private int GetIntProperty(object target, string propertyName)
+        {
+            var value = GetPropertyValue(target, propertyName);
+            if (value is int direct)
+                return direct;
+
+            int parsed;
+            return value != null && int.TryParse(value.ToString(), out parsed) ? parsed : 0;
+        }
         private void TryResolveRatingAfter(long nowTs)
         {
             if (nowTs < _nextRatingPollTs)
@@ -668,3 +930,7 @@ namespace HDTplugins.Services
         }
     }
 }
+
+
+
+

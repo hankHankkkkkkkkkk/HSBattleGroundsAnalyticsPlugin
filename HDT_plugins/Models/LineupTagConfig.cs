@@ -26,6 +26,7 @@ namespace HDTplugins.Models
         public string HeroCardId { get; set; }
         public string HeroPowerCardId { get; set; }
         public string Keyword { get; set; }
+        public bool? IsGolden { get; set; }
         public int Value { get; set; }
     }
 }

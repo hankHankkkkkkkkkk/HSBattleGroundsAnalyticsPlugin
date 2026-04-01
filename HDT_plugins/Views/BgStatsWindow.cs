@@ -766,6 +766,7 @@ namespace HDTplugins.Views
                 Padding = new Thickness(10),
                 MinHeight = 116
             };
+            border.ToolTip = BuildMinionToolTip(minion);
             var stack = new StackPanel();
             border.Child = stack;
             stack.Children.Add(new TextBlock
@@ -778,21 +779,51 @@ namespace HDTplugins.Views
             });
             stack.Children.Add(new TextBlock
             {
-                Text = string.Format("ID: {0}\n种族: {1}\n站位: {2}\n攻击/生命: {3}/{4}", SafeText(minion.CardId, "-"), SafeText(minion.Race, "-"), minion.Position, minion.Attack, minion.Health),
+                Text = "攻击",
+                Foreground = Brushes.White,
+                FontSize = 11,
+                Margin = new Thickness(0, 10, 0, 0)
+            });
+            stack.Children.Add(new TextBlock
+            {
+                Text = minion.Attack.ToString(CultureInfo.InvariantCulture),
+                Foreground = Brushes.White,
+                FontSize = 15,
+                FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(0, 2, 0, 0)
+            });
+            stack.Children.Add(new TextBlock
+            {
+                Text = "生命",
                 Foreground = Brushes.White,
                 FontSize = 11,
                 Margin = new Thickness(0, 8, 0, 0)
             });
-            var keywords = minion.Keywords?.ToDisplayTokens() ?? Array.Empty<string>();
             stack.Children.Add(new TextBlock
             {
-                Text = "关键词: " + (keywords.Count == 0 ? "无" : string.Join(", ", keywords)),
+                Text = minion.Health.ToString(CultureInfo.InvariantCulture),
                 Foreground = Brushes.White,
-                FontSize = 11,
-                Margin = new Thickness(0, 8, 0, 0),
-                TextWrapping = TextWrapping.Wrap
+                FontSize = 15,
+                FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(0, 2, 0, 0)
             });
             return border;
+        }
+
+        private object BuildMinionToolTip(BgBoardMinionSnapshot minion)
+        {
+            var keywords = minion.Keywords?.ToDisplayTokens() ?? Array.Empty<string>();
+            return string.Join(Environment.NewLine, new[]
+            {
+                "名称: " + SafeText(minion.Name, StatsStore.GetCardName(minion.CardId)),
+                "ID: " + SafeText(minion.CardId, "-"),
+                "种族: " + SafeText(minion.Race, "-"),
+                "是否金卡: " + (minion.IsGolden ? "是" : "否"),
+                "站位: " + minion.Position.ToString(CultureInfo.InvariantCulture),
+                "攻击力: " + minion.Attack.ToString(CultureInfo.InvariantCulture),
+                "生命值: " + minion.Health.ToString(CultureInfo.InvariantCulture),
+                "关键词: " + (keywords.Count == 0 ? "无" : string.Join(", ", keywords))
+            });
         }
         private UIElement BuildTagEditorPanel(BgSnapshot snapshot, List<string> combinedTags)
         {

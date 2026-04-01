@@ -54,7 +54,7 @@ namespace HDTplugins.Services
                 _lineupTagService.Initialize(_tablesDir);
                 _versionDisplayService.Initialize(_tablesDir);
 
-                SetArchiveInternal(ArchiveKeyProvider.GetDefaultArchive());
+                SetArchiveInternal(ResolveInitialArchive());
                 BackupFileIfExists(_finalFilePath);
                 MigrateIfNeeded(oldFinal, _finalFilePath);
                 MigrateIfNeeded(oldPending, _pendingFilePath);
@@ -144,7 +144,7 @@ namespace HDTplugins.Services
 
         public ArchiveVersionInfo ConfirmCurrentArchiveForMatch()
         {
-            var detected = ArchiveKeyProvider.ResolveCurrentArchive(_versionDisplayService.MapVersion);
+            var detected = ResolveBestArchiveForCurrentVersion();
             SetArchiveInternal(detected);
             HdtLog.Info($"[BGStats] 当前对局版本：{CurrentArchive?.DisplayName}");
             return CurrentArchive;
@@ -315,6 +315,41 @@ namespace HDTplugins.Services
             File.WriteAllText(Path.Combine(archiveDir, "label.txt"), target.DisplayName ?? string.Empty, Encoding.UTF8);
         }
 
+        private ArchiveVersionInfo ResolveInitialArchive()
+        {
+            var preferred = ResolveBestArchiveForCurrentVersion();
+            if (HasRecordedMatches(preferred?.Key))
+                return preferred;
+
+            var latestRecorded = GetLatestRecordedArchive();
+            if (latestRecorded != null)
+                return latestRecorded;
+
+            return preferred ?? ArchiveKeyProvider.GetDefaultArchive();
+        }
+
+        private ArchiveVersionInfo ResolveBestArchiveForCurrentVersion()
+        {
+            var detected = ArchiveKeyProvider.ResolveCurrentArchive(_versionDisplayService.MapVersion);
+            if (detected == null)
+                return ArchiveKeyProvider.GetDefaultArchive();
+
+            var recorded = GetRecordedArchivesInternal();
+            var exact = recorded.FirstOrDefault(x => string.Equals(x.Key, detected.Key, StringComparison.OrdinalIgnoreCase));
+            if (exact != null)
+                return exact;
+
+            var sameDisplayName = recorded.FirstOrDefault(x => string.Equals(x.DisplayName, detected.DisplayName, StringComparison.OrdinalIgnoreCase));
+            if (sameDisplayName != null)
+                return sameDisplayName;
+
+            var samePatch = recorded.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x.PatchVersion) && string.Equals(x.PatchVersion, detected.PatchVersion, StringComparison.OrdinalIgnoreCase));
+            if (samePatch != null)
+                return samePatch;
+
+            return detected;
+        }
+
         private IReadOnlyList<BgSnapshot> LoadSnapshots()
         {
             var rows = new List<BgSnapshot>();
@@ -329,6 +364,85 @@ namespace HDTplugins.Services
             }
 
             return rows;
+        }
+
+        private List<ArchiveVersionInfo> GetRecordedArchivesInternal()
+        {
+            var archives = new List<ArchiveVersionInfo>();
+            if (string.IsNullOrWhiteSpace(_archivesDir) || !Directory.Exists(_archivesDir))
+                return archives;
+
+            foreach (var dir in Directory.GetDirectories(_archivesDir))
+            {
+                try
+                {
+                    var finalFile = Path.Combine(dir, "bg_stats.jsonl");
+                    if (!File.Exists(finalFile) || new FileInfo(finalFile).Length <= 0)
+                        continue;
+
+                    var key = Path.GetFileName(dir);
+                    var labelPath = Path.Combine(dir, "label.txt");
+                    var label = File.Exists(labelPath) ? File.ReadAllText(labelPath, Encoding.UTF8) : null;
+                    archives.Add(ArchiveKeyProvider.CreateFromStoredLabel(key, label));
+                }
+                catch { }
+            }
+
+            return archives
+                .OrderByDescending(x => string.Equals(x.Key, CurrentArchive?.Key, StringComparison.OrdinalIgnoreCase))
+                .ThenByDescending(x => x.DisplayName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private ArchiveVersionInfo GetLatestRecordedArchive()
+        {
+            if (string.IsNullOrWhiteSpace(_archivesDir) || !Directory.Exists(_archivesDir))
+                return null;
+
+            var latest = Directory.GetDirectories(_archivesDir)
+                .Select(dir =>
+                {
+                    try
+                    {
+                        var finalFile = Path.Combine(dir, "bg_stats.jsonl");
+                        if (!File.Exists(finalFile) || new FileInfo(finalFile).Length <= 0)
+                            return null;
+
+                        var key = Path.GetFileName(dir);
+                        var labelPath = Path.Combine(dir, "label.txt");
+                        var label = File.Exists(labelPath) ? File.ReadAllText(labelPath, Encoding.UTF8) : null;
+                        return new
+                        {
+                            Archive = ArchiveKeyProvider.CreateFromStoredLabel(key, label),
+                            ModifiedUtc = File.GetLastWriteTimeUtc(finalFile)
+                        };
+                    }
+                    catch
+                    {
+                        return null;
+                    }
+                })
+                .Where(x => x != null)
+                .OrderByDescending(x => x.ModifiedUtc)
+                .FirstOrDefault();
+
+            return latest?.Archive;
+        }
+
+        private bool HasRecordedMatches(string archiveKey)
+        {
+            if (string.IsNullOrWhiteSpace(archiveKey) || string.IsNullOrWhiteSpace(_archivesDir))
+                return false;
+
+            try
+            {
+                var finalFile = Path.Combine(_archivesDir, archiveKey, "bg_stats.jsonl");
+                return File.Exists(finalFile) && new FileInfo(finalFile).Length > 0;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private BgSnapshot NormalizeSnapshot(BgSnapshot snapshot)

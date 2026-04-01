@@ -74,11 +74,13 @@ namespace HDTplugins.Services
                 "// 3. conditions 支持两类写法：",
                 "//    A. 组合条件：{ \"op\": \"all\" | \"any\", \"items\": [ ... ] }",
                 "//    B. 原子条件：{ \"type\": \"minionRaceCountAtLeast\", \"race\": \"MECHANICAL\", \"value\": 4 }",
+                "// race 可用值：BEAST(野兽), DEMON(恶魔), DRAGON(龙), ELEMENTAL/ELEMENT(元素), MECHANICAL(机械), MURLOC(鱼人), NAGA(娜迦), PIRATE(海盗), QUILBOAR(野猪人), TOTEM(图腾), UNDEAD(亡灵), ALL(全部/融合怪)。",
                 "// 可用 type：",
                 "// - minionRaceCountAtLeast: 终局阵容中某种族数量至少 value",
                 "// - cardIdExists: 终局阵容中存在指定 cardId",
                 "// - cardIdCountAtLeast: 终局阵容中 cardId 或 cardIds 的总数量至少 value",
                 "// - goldenCountAtLeast: 终局阵容中金色随从数量至少 value",
+                "// - isGolden: 判断是否存在金卡。可配 isGolden=true/false；若同时提供 cardId，则判断指定卡是否为金卡",
                 "// - heroIs: 英雄 cardId 等于 heroCardId",
                 "// - heroPowerIs: 终局英雄技能 cardId 等于 heroPowerCardId",
                 "// - tavernTierAtLeast: 本局曾到达的最高酒馆等级至少 value",
@@ -172,6 +174,11 @@ namespace HDTplugins.Services
                     return finalBoard.Count(x => cardIds.Contains(x.CardId ?? string.Empty)) >= condition.Value;
                 case "goldencountatleast":
                     return finalBoard.Count(x => x.IsGolden) >= condition.Value;
+                case "isgolden":
+                    var expectedGolden = condition.IsGolden ?? true;
+                    if (!string.IsNullOrWhiteSpace(condition.CardId))
+                        return finalBoard.Any(x => string.Equals(x.CardId, condition.CardId, StringComparison.OrdinalIgnoreCase) && x.IsGolden == expectedGolden);
+                    return finalBoard.Any(x => x.IsGolden == expectedGolden);
                 case "herois":
                     return string.Equals(snapshot.HeroCardId, condition.HeroCardId, StringComparison.OrdinalIgnoreCase);
                 case "heropoweris":
