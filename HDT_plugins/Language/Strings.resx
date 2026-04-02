@@ -1,0 +1,93 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="Plugin_Name" xml:space="preserve"><value>Battlegrounds Analytics</value></data>
+  <data name="Plugin_Description" xml:space="preserve"><value>Track Battlegrounds hero picks and placements</value></data>
+  <data name="Plugin_ButtonText" xml:space="preserve"><value>Settings</value></data>
+  <data name="Plugin_MenuHeader" xml:space="preserve"><value>Battlegrounds Analytics</value></data>
+  <data name="Common_Save" xml:space="preserve"><value>Save</value></data>
+  <data name="Common_Cancel" xml:space="preserve"><value>Cancel</value></data>
+  <data name="Common_Back" xml:space="preserve"><value>Back</value></data>
+  <data name="Common_NoData" xml:space="preserve"><value>No data</value></data>
+  <data name="Common_None" xml:space="preserve"><value>None</value></data>
+  <data name="Common_Todo" xml:space="preserve"><value>Coming soon</value></data>
+  <data name="Common_GoldPrefix" xml:space="preserve"><value>(gold) </value></data>
+  <data name="Common_RatingDeltaPositive" xml:space="preserve"><value>+{0}</value></data>
+  <data name="Common_PlaceholderDeveloping" xml:space="preserve"><value>This entry is available now, and the detailed feature is still in progress.</value></data>
+  <data name="Common_WeekRangeFormat" xml:space="preserve"><value>{0:yyyy-MM-dd} ~ {1:yyyy-MM-dd}</value></data>
+  <data name="Settings_Title" xml:space="preserve"><value>Battlegrounds Analytics - Settings</value></data>
+  <data name="Settings_Header" xml:space="preserve"><value>Plugin Settings</value></data>
+  <data name="Settings_AutoOpenOnStartup" xml:space="preserve"><value>Open the Battlegrounds Analytics window automatically when HDT starts</value></data>
+  <data name="Settings_AutoOpenHint" xml:space="preserve"><value>If disabled, the plugin still loads but the window will not pop up automatically at HDT startup.</value></data>
+  <data name="Settings_LanguageLabel" xml:space="preserve"><value>Language</value></data>
+  <data name="Settings_LanguageZhCn" xml:space="preserve"><value>Simplified Chinese</value></data>
+  <data name="Settings_LanguageEnUs" xml:space="preserve"><value>English (US)</value></data>
+  <data name="Sidebar_History" xml:space="preserve"><value>Match History</value></data>
+  <data name="Sidebar_Races" xml:space="preserve"><value>Race Stats</value></data>
+  <data name="Sidebar_Heroes" xml:space="preserve"><value>Hero Stats</value></data>
+  <data name="Sidebar_Matches" xml:space="preserve"><value>Match Stats</value></data>
+  <data name="Sidebar_Settings" xml:space="preserve"><value>Settings</value></data>
+  <data name="VersionInfo_Title" xml:space="preserve"><value>Version</value></data>
+  <data name="VersionInfo_DefaultDisplay" xml:space="preserve"><value>season12 patch35.0</value></data>
+  <data name="VersionInfo_NoMoreData" xml:space="preserve"><value>No additional version data</value></data>
+  <data name="HistoryMatches_Title" xml:space="preserve"><value>Match History</value></data>
+  <data name="HistoryMatches_SeasonRange" xml:space="preserve"><value>Season</value></data>
+  <data name="HistoryMatches_WeekRange" xml:space="preserve"><value>Week</value></data>
+  <data name="HistoryMatches_DayRange" xml:space="preserve"><value>Day</value></data>
+  <data name="HistoryMatches_Empty" xml:space="preserve"><value>No matches found for the current filter</value></data>
+  <data name="HistoryMatches_TimeRatingFormat" xml:space="preserve"><value>Time: {0}    Placement: {1}    Rating: {2}    Delta: {3}</value></data>
+  <data name="HistoryMatches_AnomalyFormat" xml:space="preserve"><value>Anomaly: {0}</value></data>
+  <data name="HistoryMatches_FinalBoardFormat" xml:space="preserve"><value>Final Board: {0}</value></data>
+  <data name="HistoryMatches_SummaryEmpty" xml:space="preserve"><value>Matches: 0    Avg Placement: -    Rating Delta: -</value></data>
+  <data name="HistoryMatches_SummaryFormat" xml:space="preserve"><value>Matches: {0}  Avg Placement: {1:F2}  Rating Delta: {2}</value></data>
+  <data name="MatchDetail_Title" xml:space="preserve"><value>Match Detail</value></data>
+  <data name="MatchDetail_TimeFormat" xml:space="preserve"><value>Time: {0}</value></data>
+  <data name="MatchDetail_HeaderStatsFormat" xml:space="preserve"><value>Placement: {0}   Rating: {1}   Rating Delta: {2}</value></data>
+  <data name="MatchDetail_SelectedHeroFormat" xml:space="preserve"><value>Selected Hero: {0}</value></data>
+  <data name="MatchDetail_FinalHeroPowerFormat" xml:space="preserve"><value>Final Hero Power: {0}</value></data>
+  <data name="MatchDetail_FinalBoard" xml:space="preserve"><value>Final Board:</value></data>
+  <data name="MatchDetail_TavernSection" xml:space="preserve"><value>Tavern Progress</value></data>
+  <data name="MatchDetail_TavernUpgradeEmpty" xml:space="preserve"><value>Turn-Tier: No data</value></data>
+  <data name="MatchDetail_TavernUpgradeFormat" xml:space="preserve"><value>Turn-Tier: {0}</value></data>
+  <data name="MatchDetail_TavernChartEmpty" xml:space="preserve"><value>No tavern upgrade data</value></data>
+  <data name="MatchDetail_TavernTooltipFormat" xml:space="preserve"><value>Turn: {0}{1}Tier: {2}</value></data>
+  <data name="Minion_Attack" xml:space="preserve"><value>Attack</value></data>
+  <data name="Minion_Health" xml:space="preserve"><value>Health</value></data>
+  <data name="MinionTooltip_NameFormat" xml:space="preserve"><value>Name: {0}</value></data>
+  <data name="MinionTooltip_IdFormat" xml:space="preserve"><value>ID: {0}</value></data>
+  <data name="MinionTooltip_RaceFormat" xml:space="preserve"><value>Race: {0}</value></data>
+  <data name="MinionTooltip_GoldenFormat" xml:space="preserve"><value>Golden: {0}</value></data>
+  <data name="MinionTooltip_PositionFormat" xml:space="preserve"><value>Position: {0}</value></data>
+  <data name="MinionTooltip_AttackFormat" xml:space="preserve"><value>Attack: {0}</value></data>
+  <data name="MinionTooltip_HealthFormat" xml:space="preserve"><value>Health: {0}</value></data>
+  <data name="MinionTooltip_KeywordsFormat" xml:space="preserve"><value>Keywords: {0}</value></data>
+  <data name="MinionTooltip_GoldenYes" xml:space="preserve"><value>Yes</value></data>
+  <data name="MinionTooltip_GoldenNo" xml:space="preserve"><value>No</value></data>
+  <data name="Tags_Empty" xml:space="preserve"><value>No TAG</value></data>
+  <data name="Tags_MaxReached" xml:space="preserve"><value>Up to 5 tags are supported</value></data>
+  <data name="Tags_NoAvailable" xml:space="preserve"><value>No available tags to add</value></data>
+  <data name="GameRace_BEAST" xml:space="preserve"><value>Beast</value></data>
+  <data name="GameRace_DEMON" xml:space="preserve"><value>Demon</value></data>
+  <data name="GameRace_DRAGON" xml:space="preserve"><value>Dragon</value></data>
+  <data name="GameRace_ELEMENTAL" xml:space="preserve"><value>Elemental</value></data>
+  <data name="GameRace_MECHANICAL" xml:space="preserve"><value>Mech</value></data>
+  <data name="GameRace_MURLOC" xml:space="preserve"><value>Murloc</value></data>
+  <data name="GameRace_NAGA" xml:space="preserve"><value>Naga</value></data>
+  <data name="GameRace_PIRATE" xml:space="preserve"><value>Pirate</value></data>
+  <data name="GameRace_QUILBOAR" xml:space="preserve"><value>Quilboar</value></data>
+  <data name="GameRace_UNDEAD" xml:space="preserve"><value>Undead</value></data>
+  <data name="GameRace_ALL" xml:space="preserve"><value>All</value></data>
+  <data name="GameRace_TOTEM" xml:space="preserve"><value>Totem</value></data>
+  <data name="GameRace_BLANK" xml:space="preserve"><value></value></data>
+</root>

@@ -4,6 +4,7 @@ using System;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
+using HDTplugins.Localization;
 using HDTplugins.Services;
 using HDTplugins.Views;
 
@@ -13,11 +14,11 @@ namespace HDTplugins
 {
     public class Plugin : IPlugin
     {
-        public string Name => "Hank的酒馆数据分析";
-        public string Description => "统计酒馆战棋英雄选择与排名";
+        public string Name => Loc.S("Plugin_Name");
+        public string Description => Loc.S("Plugin_Description");
         public string Author => "Hank";
-        public Version Version => new Version(0, 7, 6);
-        public string ButtonText => "设置";
+        public Version Version => new Version(0, 8, 5);
+        public string ButtonText => Loc.S("Plugin_ButtonText");
         public MenuItem MenuItem => _menuItem;
 
         private bool _finalizedThisMatch;
@@ -26,7 +27,6 @@ namespace HDTplugins
         private StatsStore _store;
         private PluginSettingsService _settingsService;
         private BgStatsWindow _statsWindow;
-        private SettingsView _settingsView;
         private MenuItem _menuItem;
 
         public void OnLoad()
@@ -38,8 +38,11 @@ namespace HDTplugins
             _store.Initialize();
             _settingsService = new PluginSettingsService();
             _settingsService.Initialize(_store.TablesDirectoryPath);
+            LocalizationService.Initialize(_settingsService.Settings.Language);
+            GameTextService.Initialize();
             _probe = new BgGameProbe();
             _menuItem = CreateQuickOpenMenuItem();
+            LocalizationService.LanguageChanged += OnLanguageChanged;
 
             GameEvents.OnGameStart.Add(OnGameStart);
             GameEvents.OnGameEnd.Add(OnGameEnd);
@@ -52,13 +55,15 @@ namespace HDTplugins
         public void OnUnload()
         {
             _enabled = false;
+            LocalizationService.LanguageChanged -= OnLanguageChanged;
             TryCloseWindow();
             HdtLog.Info("[Hank的log信息] 插件已卸载（已关闭开关）");
         }
 
         public void OnButtonPress()
         {
-            ShowSettingsWindow();
+            ShowWindow();
+            _statsWindow?.ShowSettings();
         }
 
         public void OnUpdate()
@@ -90,6 +95,8 @@ namespace HDTplugins
                     _probe.AnomalyCardId,
                     _probe.FinalBoard,
                     _probe.TavernUpgradeTimeline);
+                var latestArchive = _store.RefreshLatestRecordedArchiveForDisplay();
+                _statsWindow?.SyncVersionSelection(latestArchive?.Key);
                 _statsWindow?.Reload();
                 _finalizedThisMatch = true;
                 _probe.StopFinalizePolling();
@@ -102,9 +109,9 @@ namespace HDTplugins
 
             _finalizedThisMatch = false;
             _store.ResetMatch();
-            var archive = _store.ConfirmCurrentArchiveForMatch();
+            _store.ConfirmCurrentArchiveForMatch();
             _probe.OnGameStart();
-            _statsWindow?.SyncVersionSelection(archive?.Key);
+            _statsWindow?.SyncVersionSelection(null);
         }
 
         private void OnGameEnd()
@@ -127,7 +134,7 @@ namespace HDTplugins
         {
             if (_statsWindow == null)
             {
-                _statsWindow = new BgStatsWindow(_store);
+                _statsWindow = new BgStatsWindow(_store, _settingsService);
                 _statsWindow.OpenMatchDetailRequested += OnOpenMatchDetailRequested;
                 _statsWindow.Closed += (_, __) => _statsWindow = null;
             }
@@ -143,33 +150,16 @@ namespace HDTplugins
         {
             var item = new MenuItem
             {
-                Header = "酒馆数据分析"
+                Header = Loc.S("Plugin_MenuHeader")
             };
             item.Click += delegate { ShowWindow(); };
             return item;
         }
 
-        private void ShowSettingsWindow()
+        private void OnLanguageChanged(object sender, EventArgs e)
         {
-            if (_settingsService == null)
-                return;
-
-            _settingsService.Reload();
-            if (_settingsView == null)
-            {
-                _settingsView = new SettingsView(_settingsService);
-                _settingsView.Closed += delegate { _settingsView = null; };
-            }
-
-            try
-            {
-                var owner = Application.Current?.MainWindow;
-                if (owner != null && !ReferenceEquals(owner, _settingsView))
-                    _settingsView.Owner = owner;
-            }
-            catch { }
-
-            _settingsView.ShowDialog();
+            if (_menuItem != null)
+                _menuItem.Header = Loc.S("Plugin_MenuHeader");
         }
 
         private void TryAttachOwner()

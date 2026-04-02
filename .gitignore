@@ -364,3 +364,6 @@ FodyWeavers.xsd
 
 # Igore Codex Environment
 .codex/
+.tmpbuild/
+.build_tmp/
+AGENT.md

@@ -1,4 +1,5 @@
-﻿using HDTplugins.Services;
+﻿using HDTplugins.Localization;
+using HDTplugins.Services;
 using System;
 using System.Windows;
 using System.Windows.Controls;
@@ -10,12 +11,15 @@ namespace HDTplugins.Views
     {
         private readonly PluginSettingsService _settingsService;
         private readonly CheckBox _autoOpenCheckBox;
+        private readonly TextBlock _headerText;
+        private readonly TextBlock _hintText;
+        private readonly Button _cancelButton;
+        private readonly Button _saveButton;
 
         public SettingsView(PluginSettingsService settingsService)
         {
             _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
 
-            Title = "酒馆数据分析 - 插件设置";
             Width = 420;
             Height = 220;
             MinWidth = 380;
@@ -30,14 +34,14 @@ namespace HDTplugins.Views
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             Content = root;
 
-            root.Children.Add(new TextBlock
+            _headerText = new TextBlock
             {
-                Text = "插件设置",
                 FontSize = 22,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = new SolidColorBrush(Color.FromRgb(88, 80, 70)),
                 Margin = new Thickness(0, 0, 0, 16)
-            });
+            };
+            root.Children.Add(_headerText);
 
             var contentBorder = new Border
             {
@@ -52,21 +56,21 @@ namespace HDTplugins.Views
             contentBorder.Child = contentStack;
             _autoOpenCheckBox = new CheckBox
             {
-                Content = "打开 HDT 时自动打开酒馆数据分析插件",
                 IsChecked = _settingsService.Settings.AutoOpenOnStartup,
                 Foreground = Brushes.White,
                 FontSize = 15,
                 FontWeight = FontWeights.SemiBold
             };
             contentStack.Children.Add(_autoOpenCheckBox);
-            contentStack.Children.Add(new TextBlock
+
+            _hintText = new TextBlock
             {
-                Text = "关闭后，插件仍会加载，但不会在 HDT 启动时自动弹出窗口。",
                 Margin = new Thickness(0, 10, 0, 0),
                 Foreground = Brushes.White,
                 FontSize = 12,
                 TextWrapping = TextWrapping.Wrap
-            });
+            };
+            contentStack.Children.Add(_hintText);
 
             var buttonPanel = new StackPanel
             {
@@ -76,26 +80,44 @@ namespace HDTplugins.Views
             Grid.SetRow(buttonPanel, 2);
             root.Children.Add(buttonPanel);
 
-            var cancelButton = CreateButton("取消", new Thickness(0, 0, 10, 0));
-            cancelButton.Click += delegate { Close(); };
-            buttonPanel.Children.Add(cancelButton);
+            _cancelButton = CreateButton(new Thickness(0, 0, 10, 0));
+            _cancelButton.Click += delegate { Close(); };
+            buttonPanel.Children.Add(_cancelButton);
 
-            var saveButton = CreateButton("保存", new Thickness(0));
-            saveButton.Click += delegate
+            _saveButton = CreateButton(new Thickness(0));
+            _saveButton.Click += delegate
             {
                 _settingsService.Settings.AutoOpenOnStartup = _autoOpenCheckBox.IsChecked != false;
                 _settingsService.Save();
                 DialogResult = true;
                 Close();
             };
-            buttonPanel.Children.Add(saveButton);
+            buttonPanel.Children.Add(_saveButton);
+
+            LocalizationService.LanguageChanged += OnLanguageChanged;
+            Closed += delegate { LocalizationService.LanguageChanged -= OnLanguageChanged; };
+            ApplyLocalization();
         }
 
-        private static Button CreateButton(string text, Thickness margin)
+        private void OnLanguageChanged(object sender, EventArgs e)
+        {
+            ApplyLocalization();
+        }
+
+        private void ApplyLocalization()
+        {
+            Title = Loc.S("Settings_Title");
+            _headerText.Text = Loc.S("Settings_Header");
+            _autoOpenCheckBox.Content = Loc.S("Settings_AutoOpenOnStartup");
+            _hintText.Text = Loc.S("Settings_AutoOpenHint");
+            _cancelButton.Content = Loc.S("Common_Cancel");
+            _saveButton.Content = Loc.S("Common_Save");
+        }
+
+        private static Button CreateButton(Thickness margin)
         {
             return new Button
             {
-                Content = text,
                 Width = 80,
                 Height = 34,
                 Margin = margin,

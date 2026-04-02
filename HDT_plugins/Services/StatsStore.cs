@@ -1,4 +1,4 @@
-﻿using HearthDb;
+﻿using HDTplugins.Localization;
 using HDTplugins.Models;
 using System;
 using System.Collections.Generic;
@@ -23,6 +23,9 @@ namespace HDTplugins.Services
         private string _finalFilePath;
         private string _pendingFilePath;
         private string _tablesDir;
+        private ArchiveVersionInfo _activeMatchArchive;
+        private string _activeFinalFilePath;
+        private string _activePendingFilePath;
 
         public string CurrentMatchId { get; private set; }
         public string CurrentMatchTimestampUtc { get; private set; }
@@ -108,30 +111,7 @@ namespace HDTplugins.Services
 
         public IReadOnlyList<ArchiveVersionInfo> GetRecordedArchives()
         {
-            var archives = new List<ArchiveVersionInfo>();
-            if (string.IsNullOrWhiteSpace(_archivesDir) || !Directory.Exists(_archivesDir))
-                return archives;
-
-            foreach (var dir in Directory.GetDirectories(_archivesDir))
-            {
-                try
-                {
-                    var finalFile = Path.Combine(dir, "bg_stats.jsonl");
-                    if (!File.Exists(finalFile) || new FileInfo(finalFile).Length <= 0)
-                        continue;
-
-                    var key = Path.GetFileName(dir);
-                    var labelPath = Path.Combine(dir, "label.txt");
-                    var label = File.Exists(labelPath) ? File.ReadAllText(labelPath, Encoding.UTF8) : null;
-                    archives.Add(ArchiveKeyProvider.CreateFromStoredLabel(key, label));
-                }
-                catch { }
-            }
-
-            return archives
-                .OrderByDescending(x => string.Equals(x.Key, CurrentArchive?.Key, StringComparison.OrdinalIgnoreCase))
-                .ThenByDescending(x => x.DisplayName, StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            return GetRecordedArchivesInternal();
         }
 
         public ArchiveVersionInfo SetArchiveByKey(string archiveKey)
@@ -145,8 +125,25 @@ namespace HDTplugins.Services
         public ArchiveVersionInfo ConfirmCurrentArchiveForMatch()
         {
             var detected = ResolveBestArchiveForCurrentVersion();
-            SetArchiveInternal(detected);
-            HdtLog.Info($"[BGStats] 当前对局版本：{CurrentArchive?.DisplayName}");
+            SetActiveMatchArchive(detected);
+            HdtLog.Info($"[BGStats] 当前对局版本：{_activeMatchArchive?.DisplayName}");
+            return _activeMatchArchive;
+        }
+
+        public ArchiveVersionInfo GetLatestRecordedArchiveForDisplay()
+        {
+            return GetLatestRecordedArchive() ?? CurrentArchive;
+        }
+
+        public ArchiveVersionInfo RefreshLatestRecordedArchiveForDisplay()
+        {
+            var latest = GetLatestRecordedArchive();
+            if (latest == null)
+                return CurrentArchive;
+
+            if (!string.Equals(CurrentArchive?.Key, latest.Key, StringComparison.OrdinalIgnoreCase))
+                SetArchiveInternal(latest);
+
             return CurrentArchive;
         }
 
@@ -155,6 +152,9 @@ namespace HDTplugins.Services
             CurrentMatchId = null;
             CurrentMatchTimestampUtc = null;
             PendingWritten = false;
+            _activeMatchArchive = null;
+            _activeFinalFilePath = null;
+            _activePendingFilePath = null;
         }
 
         public IReadOnlyList<BgMatchRow> LoadMatchRows()
@@ -169,8 +169,10 @@ namespace HDTplugins.Services
                     Placement = snapshot.Placement,
                     RatingAfter = snapshot.RatingAfter,
                     RatingDelta = snapshot.RatingDelta,
-                    HeroName = NormalizeDisplay(snapshot.HeroName, "未知英雄"),
-                    AnomalyDisplay = NormalizeDisplay(snapshot.AnomalyName, "待开发"),
+                    HeroName = GameTextService.GetCardName(snapshot.HeroCardId, NormalizeDisplay(snapshot.HeroName, snapshot.HeroCardId)),
+                    AnomalyDisplay = string.IsNullOrWhiteSpace(snapshot.AnomalyCardId)
+                        ? NormalizeDisplay(snapshot.AnomalyName, Loc.S("Common_Todo"))
+                        : GameTextService.GetCardName(snapshot.AnomalyCardId, NormalizeDisplay(snapshot.AnomalyName, Loc.S("Common_Todo"))),
                     FinalBoardDisplay = BuildFinalBoardDisplay(snapshot),
                     Tags = MergeTags(snapshot).Take(5).ToList()
                 })
@@ -222,7 +224,8 @@ namespace HDTplugins.Services
         {
             try
             {
-                if (PendingWritten || string.IsNullOrEmpty(_pendingFilePath) || string.IsNullOrEmpty(heroCardId))
+                var pendingFilePath = GetWritePendingFilePath();
+                if (PendingWritten || string.IsNullOrEmpty(pendingFilePath) || string.IsNullOrEmpty(heroCardId))
                     return;
 
                 CurrentMatchId = Guid.NewGuid().ToString("N");
@@ -232,13 +235,13 @@ namespace HDTplugins.Services
                 var pendingLine = "{"
                     + $"\"matchId\":\"{JsonEscape(CurrentMatchId)}\"," 
                     + $"\"timestamp\":\"{JsonEscape(CurrentMatchTimestampUtc)}\"," 
-                    + $"\"gameVersion\":\"{JsonEscape(CurrentArchive?.DisplayName ?? string.Empty)}\"," 
+                    + $"\"gameVersion\":\"{JsonEscape((_activeMatchArchive ?? CurrentArchive)?.DisplayName ?? string.Empty)}\"," 
                     + $"\"heroCardId\":\"{JsonEscape(heroCardId)}\"," 
                     + $"\"heroSkinCardId\":\"{JsonEscape(heroSkinCardId ?? string.Empty)}\"," 
                     + $"\"initialHeroPowerCardId\":\"{JsonEscape(initialHeroPowerCardId ?? string.Empty)}\""
                     + "}";
 
-                File.AppendAllText(_pendingFilePath, pendingLine + Environment.NewLine, Encoding.UTF8);
+                File.AppendAllText(pendingFilePath, pendingLine + Environment.NewLine, Encoding.UTF8);
             }
             catch (Exception ex)
             {
@@ -250,7 +253,8 @@ namespace HDTplugins.Services
         {
             try
             {
-                if (string.IsNullOrEmpty(matchId) || string.IsNullOrEmpty(_pendingFilePath) || string.IsNullOrEmpty(_finalFilePath))
+                var finalFilePath = GetWriteFinalFilePath();
+                if (string.IsNullOrEmpty(matchId) || string.IsNullOrEmpty(GetWritePendingFilePath()) || string.IsNullOrEmpty(finalFilePath))
                     return;
                 if (string.IsNullOrEmpty(heroCardId) || placement <= 0 || ratingAfter <= 0)
                     return;
@@ -266,7 +270,7 @@ namespace HDTplugins.Services
                 {
                     MatchId = matchId,
                     Timestamp = string.IsNullOrEmpty(timestamp) ? DateTime.UtcNow.ToString("o") : timestamp,
-                    GameVersion = CurrentArchive?.DisplayName ?? string.Empty,
+                    GameVersion = (_activeMatchArchive ?? CurrentArchive)?.DisplayName ?? string.Empty,
                     HeroCardId = heroCardId,
                     HeroName = GetCardName(heroCardId),
                     HeroSkinCardId = heroSkinCardId ?? string.Empty,
@@ -290,7 +294,7 @@ namespace HDTplugins.Services
                 };
                 snapshot.AutoTags = _lineupTagService.Evaluate(snapshot).ToList();
 
-                File.AppendAllText(_finalFilePath, _serializer.Serialize(snapshot) + Environment.NewLine, Encoding.UTF8);
+                File.AppendAllText(finalFilePath, _serializer.Serialize(snapshot) + Environment.NewLine, Encoding.UTF8);
             }
             catch (Exception ex)
             {
@@ -312,6 +316,23 @@ namespace HDTplugins.Services
             _finalFilePath = Path.Combine(archiveDir, "bg_stats.jsonl");
             _pendingFilePath = Path.Combine(archiveDir, "bg_stats_pending.jsonl");
             CurrentArchive = target;
+            File.WriteAllText(Path.Combine(archiveDir, "label.txt"), target.DisplayName ?? string.Empty, Encoding.UTF8);
+        }
+
+        private void SetActiveMatchArchive(ArchiveVersionInfo info)
+        {
+            var target = info ?? ArchiveKeyProvider.GetDefaultArchive();
+            if (string.IsNullOrWhiteSpace(target.Key))
+                target.Key = ArchiveKeyProvider.BuildArchiveKey(target.DisplayName);
+            if (string.IsNullOrWhiteSpace(target.DisplayName))
+                target.DisplayName = ArchiveKeyProvider.BuildDisplayNameFromKey(target.Key);
+
+            var archiveDir = Path.Combine(_archivesDir ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HDT_BGStats", "Data", "archives"), target.Key);
+            Directory.CreateDirectory(archiveDir);
+
+            _activeFinalFilePath = Path.Combine(archiveDir, "bg_stats.jsonl");
+            _activePendingFilePath = Path.Combine(archiveDir, "bg_stats_pending.jsonl");
+            _activeMatchArchive = target;
             File.WriteAllText(Path.Combine(archiveDir, "label.txt"), target.DisplayName ?? string.Empty, Encoding.UTF8);
         }
 
@@ -390,6 +411,7 @@ namespace HDTplugins.Services
 
             return archives
                 .OrderByDescending(x => string.Equals(x.Key, CurrentArchive?.Key, StringComparison.OrdinalIgnoreCase))
+                .ThenByDescending(GetArchiveSortKey)
                 .ThenByDescending(x => x.DisplayName, StringComparer.OrdinalIgnoreCase)
                 .ToList();
         }
@@ -399,34 +421,10 @@ namespace HDTplugins.Services
             if (string.IsNullOrWhiteSpace(_archivesDir) || !Directory.Exists(_archivesDir))
                 return null;
 
-            var latest = Directory.GetDirectories(_archivesDir)
-                .Select(dir =>
-                {
-                    try
-                    {
-                        var finalFile = Path.Combine(dir, "bg_stats.jsonl");
-                        if (!File.Exists(finalFile) || new FileInfo(finalFile).Length <= 0)
-                            return null;
-
-                        var key = Path.GetFileName(dir);
-                        var labelPath = Path.Combine(dir, "label.txt");
-                        var label = File.Exists(labelPath) ? File.ReadAllText(labelPath, Encoding.UTF8) : null;
-                        return new
-                        {
-                            Archive = ArchiveKeyProvider.CreateFromStoredLabel(key, label),
-                            ModifiedUtc = File.GetLastWriteTimeUtc(finalFile)
-                        };
-                    }
-                    catch
-                    {
-                        return null;
-                    }
-                })
-                .Where(x => x != null)
-                .OrderByDescending(x => x.ModifiedUtc)
+            return GetRecordedArchivesInternal()
+                .OrderByDescending(GetArchiveSortKey)
+                .ThenByDescending(x => x.DisplayName, StringComparer.OrdinalIgnoreCase)
                 .FirstOrDefault();
-
-            return latest?.Archive;
         }
 
         private bool HasRecordedMatches(string archiveKey)
@@ -467,7 +465,7 @@ namespace HDTplugins.Services
                     .Select((cardId, index) => new BgBoardMinionSnapshot
                     {
                         CardId = cardId,
-                        Name = GetCardName(cardId),
+                        Name = string.Empty,
                         Position = index + 1,
                         Race = string.Empty,
                         Keywords = new BgKeywordState()
@@ -526,13 +524,14 @@ namespace HDTplugins.Services
 
         private void RemovePendingByMatchId(string matchId)
         {
-            if (!File.Exists(_pendingFilePath))
+            var pendingFilePath = GetWritePendingFilePath();
+            if (!File.Exists(pendingFilePath))
                 return;
 
-            var kept = File.ReadAllLines(_pendingFilePath, Encoding.UTF8)
+            var kept = File.ReadAllLines(pendingFilePath, Encoding.UTF8)
                 .Where(l => !string.IsNullOrWhiteSpace(l) && !l.Contains($"\"matchId\":\"{matchId}\""))
                 .ToArray();
-            File.WriteAllLines(_pendingFilePath, kept, Encoding.UTF8);
+            File.WriteAllLines(pendingFilePath, kept, Encoding.UTF8);
         }
 
         private static DateTime ParseTimestamp(string value)
@@ -545,35 +544,62 @@ namespace HDTplugins.Services
             return string.IsNullOrWhiteSpace(value) ? fallback : value;
         }
 
+        private string GetWriteFinalFilePath()
+        {
+            return string.IsNullOrWhiteSpace(_activeFinalFilePath) ? _finalFilePath : _activeFinalFilePath;
+        }
+
+        private string GetWritePendingFilePath()
+        {
+            return string.IsNullOrWhiteSpace(_activePendingFilePath) ? _pendingFilePath : _activePendingFilePath;
+        }
+
+        private static long GetArchiveSortKey(ArchiveVersionInfo archive)
+        {
+            if (archive == null || string.IsNullOrWhiteSpace(archive.PatchVersion))
+                return long.MinValue;
+
+            var parts = archive.PatchVersion.Split('.');
+            long major = 0;
+            long minor = 0;
+            long patch = 0;
+            if (parts.Length > 0)
+                long.TryParse(parts[0], out major);
+            if (parts.Length > 1)
+                long.TryParse(parts[1], out minor);
+            if (parts.Length > 2)
+                long.TryParse(parts[2], out patch);
+
+            return major * 1_000_000L + minor * 1_000L + patch;
+        }
+
         private static string BuildFinalBoardDisplay(BgSnapshot snapshot)
         {
             var board = snapshot?.FinalBoard;
             if (board == null || board.Count == 0)
-                return "待开发";
+                return Loc.S("Common_Todo");
 
             var names = board
                 .OrderBy(x => x.Position)
                 .Take(7)
-                .Select(x => (x.IsGolden ? GetGoldPrefix() : string.Empty) + NormalizeDisplay(x.Name, GetCardName(x.CardId)))
+                .Select(x => (x.IsGolden ? GetGoldPrefix() : string.Empty) + GameTextService.GetCardName(x.CardId, NormalizeDisplay(x.Name, x.CardId)))
                 .ToArray();
-            return names.Length == 0 ? "待开发" : string.Join(" / ", names);
+            return names.Length == 0 ? Loc.S("Common_Todo") : string.Join(" / ", names);
         }
 
         private static string GetGoldPrefix()
         {
-            return System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh" ? "(金)" : "(gold) ";
+            return Loc.S("Common_GoldPrefix");
         }
 
         public static string GetCardName(string cardId)
         {
-            if (string.IsNullOrEmpty(cardId))
-                return string.Empty;
-            try
-            {
-                var card = Cards.All.Values.FirstOrDefault(x => string.Equals(x.Id, cardId, StringComparison.OrdinalIgnoreCase));
-                return card?.Name ?? cardId;
-            }
-            catch { return cardId; }
+            return GameTextService.GetCardName(cardId);
+        }
+
+        public static string GetRaceNameFromCardId(string cardId, string fallback = null)
+        {
+            return GameTextService.GetRaceNameFromCardId(cardId, fallback);
         }
 
         private static string JsonEscape(string s)
@@ -661,3 +687,6 @@ namespace HDTplugins.Services
         }
     }
 }
+
+
+

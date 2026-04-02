@@ -1,4 +1,5 @@
 ﻿
+using HDTplugins.Localization;
 using HDTplugins.Models;
 using HDTplugins.Services;
 using System;
@@ -22,7 +23,8 @@ namespace HDTplugins.Views
             History,
             Races,
             Heroes,
-            Matches
+            Matches,
+            Settings
         }
 
         private enum HistoryRange
@@ -33,6 +35,7 @@ namespace HDTplugins.Views
         }
 
         private readonly StatsStore _store;
+        private readonly PluginSettingsService _settingsService;
         private readonly Dictionary<SidebarSection, Button> _sectionButtons = new Dictionary<SidebarSection, Button>();
         private readonly Dictionary<HistoryRange, Button> _rangeButtons = new Dictionary<HistoryRange, Button>();
         private readonly Dictionary<string, FrameworkElement> _historyCards = new Dictionary<string, FrameworkElement>(StringComparer.OrdinalIgnoreCase);
@@ -57,13 +60,12 @@ namespace HDTplugins.Views
         public Func<BgMatchRow, string> ResolveAnomalyDisplay { get; set; }
         public Func<BgMatchRow, string> ResolveFinalBoardDisplay { get; set; }
 
-        public BgStatsWindow(StatsStore store)
+        public BgStatsWindow(StatsStore store, PluginSettingsService settingsService)
         {
             _store = store ?? throw new ArgumentNullException(nameof(store));
-            ResolveAnomalyDisplay = row => string.IsNullOrWhiteSpace(row?.AnomalyDisplay) ? "待开发" : row.AnomalyDisplay;
-            ResolveFinalBoardDisplay = row => string.IsNullOrWhiteSpace(row?.FinalBoardDisplay) ? "待开发" : row.FinalBoardDisplay;
-
-            Title = "酒馆数据分析";
+            _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
+            ResolveAnomalyDisplay = row => string.IsNullOrWhiteSpace(row?.AnomalyDisplay) ? Loc.S("Common_Todo") : row.AnomalyDisplay;
+            ResolveFinalBoardDisplay = row => string.IsNullOrWhiteSpace(row?.FinalBoardDisplay) ? Loc.S("Common_Todo") : row.FinalBoardDisplay;
             Width = 1120;
             Height = 700;
             MinWidth = 980;
@@ -97,15 +99,22 @@ namespace HDTplugins.Views
 
             Loaded += delegate
             {
-                RefreshVersionButton();
-                RefreshSectionButtons();
-                RebuildContent();
+                ApplyLocalization(false);
             };
+            Closed += delegate { LocalizationService.LanguageChanged -= OnLanguageChanged; };
+            LocalizationService.LanguageChanged += OnLanguageChanged;
+            ApplyLocalization(false);
         }
 
         public void Reload()
         {
             RefreshVersionButton();
+            if (_currentSection == SidebarSection.Settings)
+            {
+                RebuildContent();
+                return;
+            }
+
             if (_currentSection != SidebarSection.History)
                 return;
 
@@ -122,10 +131,79 @@ namespace HDTplugins.Views
         {
             if (!string.IsNullOrWhiteSpace(archiveKey))
                 _store.SetArchiveByKey(archiveKey);
+            else
+                _store.RefreshLatestRecordedArchiveForDisplay();
 
             RefreshVersionButton();
             RefreshHistoryToolbar();
             Reload();
+        }
+
+        public void ShowSettings()
+        {
+            _settingsService.Reload();
+            _selectedMatchId = null;
+            _currentSection = SidebarSection.Settings;
+            RefreshSectionButtons();
+            RebuildContent();
+        }
+
+        private void OnLanguageChanged(object sender, EventArgs e)
+        {
+            ApplyLocalization(true);
+        }
+
+        private void ApplyLocalization(bool rebuildContent)
+        {
+            Title = Loc.S("Plugin_Name");
+            RefreshSectionButtonTexts();
+            RefreshRangeButtonTexts();
+            RefreshSectionButtons();
+            RefreshVersionButton();
+            RefreshHistoryToolbar();
+            _sectionTitle.Text = GetSectionTitle();
+
+            if (rebuildContent)
+                RebuildContent();
+        }
+
+        private void RefreshSectionButtonTexts()
+        {
+            SetButtonContent(_sectionButtons, SidebarSection.History, "Sidebar_History");
+            SetButtonContent(_sectionButtons, SidebarSection.Races, "Sidebar_Races");
+            SetButtonContent(_sectionButtons, SidebarSection.Heroes, "Sidebar_Heroes");
+            SetButtonContent(_sectionButtons, SidebarSection.Matches, "Sidebar_Matches");
+            SetButtonContent(_sectionButtons, SidebarSection.Settings, "Sidebar_Settings");
+        }
+
+        private void RefreshRangeButtonTexts()
+        {
+            SetButtonContent(_rangeButtons, HistoryRange.Season, "HistoryMatches_SeasonRange");
+            SetButtonContent(_rangeButtons, HistoryRange.Week, "HistoryMatches_WeekRange");
+            SetButtonContent(_rangeButtons, HistoryRange.Day, "HistoryMatches_DayRange");
+        }
+
+        private static void SetButtonContent<T>(IDictionary<T, Button> buttons, T key, string resourceKey)
+        {
+            if (buttons.TryGetValue(key, out var button))
+                button.Content = Loc.S(resourceKey);
+        }
+
+        private string GetSectionTitle()
+        {
+            if (_currentSection == SidebarSection.History)
+                return string.IsNullOrWhiteSpace(_selectedMatchId) ? Loc.S("HistoryMatches_Title") : Loc.S("MatchDetail_Title");
+
+            if (_currentSection == SidebarSection.Races)
+                return Loc.S("Sidebar_Races");
+
+            if (_currentSection == SidebarSection.Heroes)
+                return Loc.S("Sidebar_Heroes");
+
+            if (_currentSection == SidebarSection.Settings)
+                return Loc.S("Settings_Header");
+
+            return Loc.S("Sidebar_Matches");
         }
 
         private Border BuildSidebar()
@@ -150,10 +228,11 @@ namespace HDTplugins.Views
             _versionButton.Click += delegate { OpenVersionMenu(); };
             stack.Children.Add(_versionButton);
 
-            stack.Children.Add(CreateSectionButton(SidebarSection.History, "历史战绩"));
-            stack.Children.Add(CreateSectionButton(SidebarSection.Races, "种族数据"));
-            stack.Children.Add(CreateSectionButton(SidebarSection.Heroes, "英雄数据"));
-            stack.Children.Add(CreateSectionButton(SidebarSection.Matches, "对局数据"));
+            stack.Children.Add(CreateSectionButton(SidebarSection.History, Loc.S("Sidebar_History")));
+            stack.Children.Add(CreateSectionButton(SidebarSection.Races, Loc.S("Sidebar_Races")));
+            stack.Children.Add(CreateSectionButton(SidebarSection.Heroes, Loc.S("Sidebar_Heroes")));
+            stack.Children.Add(CreateSectionButton(SidebarSection.Matches, Loc.S("Sidebar_Matches")));
+            stack.Children.Add(CreateSectionButton(SidebarSection.Settings, Loc.S("Sidebar_Settings")));
             return border;
         }
 
@@ -172,7 +251,7 @@ namespace HDTplugins.Views
             DockPanel.SetDock(header, Dock.Top);
             dock.Children.Add(header);
 
-            _sectionTitle.Text = "历史战绩";
+            _sectionTitle.Text = Loc.S("HistoryMatches_Title");
             _sectionTitle.FontSize = 22;
             _sectionTitle.FontWeight = FontWeights.SemiBold;
             _sectionTitle.Foreground = new SolidColorBrush(Color.FromRgb(88, 80, 70));
@@ -197,9 +276,9 @@ namespace HDTplugins.Views
             _historyToolbar.Margin = new Thickness(0, 0, 0, 18);
 
             var rangePanel = new StackPanel { Orientation = Orientation.Horizontal };
-            rangePanel.Children.Add(CreateRangeButton(HistoryRange.Season, "赛季战绩"));
-            rangePanel.Children.Add(CreateRangeButton(HistoryRange.Week, "周战绩"));
-            rangePanel.Children.Add(CreateRangeButton(HistoryRange.Day, "日战绩"));
+            rangePanel.Children.Add(CreateRangeButton(HistoryRange.Season, Loc.S("HistoryMatches_SeasonRange")));
+            rangePanel.Children.Add(CreateRangeButton(HistoryRange.Week, Loc.S("HistoryMatches_WeekRange")));
+            rangePanel.Children.Add(CreateRangeButton(HistoryRange.Day, Loc.S("HistoryMatches_DayRange")));
             Grid.SetRow(rangePanel, 0);
             Grid.SetColumn(rangePanel, 0);
             _historyToolbar.Children.Add(rangePanel);
@@ -305,7 +384,7 @@ namespace HDTplugins.Views
         {
             if (_currentSection == SidebarSection.History)
             {
-                _sectionTitle.Text = string.IsNullOrWhiteSpace(_selectedMatchId) ? "历史战绩" : "对局详情";
+                _sectionTitle.Text = GetSectionTitle();
                 _historyToolbar.Visibility = string.IsNullOrWhiteSpace(_selectedMatchId) ? Visibility.Visible : Visibility.Collapsed;
                 if (string.IsNullOrWhiteSpace(_selectedMatchId))
                     RenderHistoryView();
@@ -314,14 +393,22 @@ namespace HDTplugins.Views
                 return;
             }
 
+            if (_currentSection == SidebarSection.Settings)
+            {
+                _historyToolbar.Visibility = Visibility.Collapsed;
+                _sectionTitle.Text = GetSectionTitle();
+                _contentHost.Child = BuildSettingsView();
+                return;
+            }
+
             _historyToolbar.Visibility = Visibility.Collapsed;
-            _sectionTitle.Text = _currentSection == SidebarSection.Races ? "种族数据" : _currentSection == SidebarSection.Heroes ? "英雄数据" : "对局数据";
+            _sectionTitle.Text = GetSectionTitle();
             _contentHost.Child = BuildPlaceholder();
         }
 
         private void RenderHistoryView()
         {
-            _sectionTitle.Text = "历史战绩";
+            _sectionTitle.Text = Loc.S("HistoryMatches_Title");
             _historyToolbar.Visibility = Visibility.Visible;
             RefreshHistoryToolbar();
             _historyCards.Clear();
@@ -345,6 +432,102 @@ namespace HDTplugins.Views
             RestoreSelectedHistoryCard();
         }
 
+        private UIElement BuildSettingsView()
+        {
+            _settingsService.Reload();
+
+            var currentLanguage = string.IsNullOrWhiteSpace(_settingsService.Settings.Language)
+                ? LocalizationService.CurrentCulture.Name
+                : LocalizationService.NormalizeCulture(_settingsService.Settings.Language).Name;
+            var panel = new StackPanel { MaxWidth = 520 };
+
+            var card = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
+                Padding = new Thickness(20)
+            };
+            panel.Children.Add(card);
+
+            var stack = new StackPanel();
+            card.Child = stack;
+
+            stack.Children.Add(new TextBlock
+            {
+                Text = Loc.S("Settings_Header"),
+                FontSize = 20,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = Brushes.White,
+                Margin = new Thickness(0, 0, 0, 18)
+            });
+
+            stack.Children.Add(new TextBlock
+            {
+                Text = Loc.S("Settings_LanguageLabel"),
+                Foreground = Brushes.White,
+                FontSize = 14,
+                FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(0, 0, 0, 8)
+            });
+
+            var languageComboBox = new ComboBox
+            {
+                Margin = new Thickness(0, 0, 0, 12),
+                MinWidth = 220
+            };
+            var zhCnItem = new ComboBoxItem { Content = Loc.S("Settings_LanguageZhCn"), Tag = LocalizationService.ChineseCultureName };
+            var enUsItem = new ComboBoxItem { Content = Loc.S("Settings_LanguageEnUs"), Tag = LocalizationService.DefaultCultureName };
+            languageComboBox.Items.Add(zhCnItem);
+            languageComboBox.Items.Add(enUsItem);
+            languageComboBox.SelectedItem = string.Equals(currentLanguage, LocalizationService.ChineseCultureName, StringComparison.OrdinalIgnoreCase)
+                ? (object)zhCnItem
+                : enUsItem;
+            stack.Children.Add(languageComboBox);
+
+            var autoOpenCheckBox = new CheckBox
+            {
+                Content = Loc.S("Settings_AutoOpenOnStartup"),
+                IsChecked = _settingsService.Settings.AutoOpenOnStartup,
+                Foreground = Brushes.White,
+                FontSize = 15,
+                FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+            stack.Children.Add(autoOpenCheckBox);
+
+            stack.Children.Add(new TextBlock
+            {
+                Text = Loc.S("Settings_AutoOpenHint"),
+                Foreground = Brushes.White,
+                FontSize = 12,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 18)
+            });
+
+            var saveButton = new Button
+            {
+                Content = Loc.S("Common_Save"),
+                Width = 96,
+                Height = 34,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Background = new SolidColorBrush(Color.FromRgb(126, 163, 209)),
+                Foreground = Brushes.White,
+                BorderBrush = Brushes.Transparent,
+                FontSize = 14,
+                FontWeight = FontWeights.SemiBold
+            };
+            saveButton.Click += delegate
+            {
+                var selectedLanguage = (languageComboBox.SelectedItem as ComboBoxItem)?.Tag as string;
+                _settingsService.Settings.AutoOpenOnStartup = autoOpenCheckBox.IsChecked != false;
+                _settingsService.Settings.Language = LocalizationService.NormalizeCulture(selectedLanguage).Name;
+                _settingsService.Save();
+                LocalizationService.SetLanguage(_settingsService.Settings.Language);
+            };
+            stack.Children.Add(saveButton);
+
+            return panel;
+        }
+
         private UIElement BuildPlaceholder()
         {
             var grid = new Grid();
@@ -366,7 +549,7 @@ namespace HDTplugins.Views
             });
             stack.Children.Add(new TextBlock
             {
-                Text = "入口已新增，具体功能待开发。",
+                Text = Loc.S("Common_PlaceholderDeveloping"),
                 FontSize = 15,
                 Foreground = new SolidColorBrush(Color.FromRgb(136, 127, 117)),
                 TextAlignment = TextAlignment.Center
@@ -381,7 +564,7 @@ namespace HDTplugins.Views
             {
                 _historyList.Children.Add(new TextBlock
                 {
-                    Text = "当前筛选下暂无战绩",
+                    Text = Loc.S("HistoryMatches_Empty"),
                     Foreground = new SolidColorBrush(Color.FromRgb(126, 118, 108)),
                     FontSize = 15,
                     Margin = new Thickness(0, 18, 0, 0)
@@ -431,21 +614,21 @@ namespace HDTplugins.Views
                 Margin = new Thickness(0, 6, 0, 0),
                 Foreground = Brushes.White,
                 FontSize = 13,
-                Text = string.Format("时间: {0}    名次: {1}    分数: {2}    变动: {3}", row.TimestampText, row.Placement, row.RatingAfter, row.RatingDeltaText)
+                Text = Loc.F("HistoryMatches_TimeRatingFormat", row.TimestampText, row.Placement, row.RatingAfter, FormatRatingDelta(row.RatingDelta))
             });
             stack.Children.Add(new TextBlock
             {
                 Margin = new Thickness(0, 6, 0, 0),
                 Foreground = Brushes.White,
                 FontSize = 13,
-                Text = "畸变: " + row.AnomalyDisplay
+                Text = Loc.F("HistoryMatches_AnomalyFormat", row.AnomalyDisplay)
             });
             stack.Children.Add(new TextBlock
             {
                 Margin = new Thickness(0, 6, 0, 0),
                 Foreground = Brushes.White,
                 FontSize = 13,
-                Text = "终局阵容: " + row.FinalBoardDisplay,
+                Text = Loc.F("HistoryMatches_FinalBoardFormat", row.FinalBoardDisplay),
                 TextWrapping = TextWrapping.Wrap
             });
 
@@ -457,13 +640,13 @@ namespace HDTplugins.Views
         {
             if (rows.Count == 0)
             {
-                _summaryText.Content = "对局数: 0    平均排名: -    分数变化: -";
+                _summaryText.Content = Loc.S("HistoryMatches_SummaryEmpty");
                 return;
             }
 
             var averagePlacement = rows.Average(x => x.Placement);
             var totalDelta = rows.Sum(x => x.RatingDelta);
-            _summaryText.Content = string.Format("对局数: {0}  平均排名: {1:F2}  分数变化: {2}", rows.Count, averagePlacement, totalDelta > 0 ? "+" + totalDelta : totalDelta.ToString());
+            _summaryText.Content = Loc.F("HistoryMatches_SummaryFormat", rows.Count, averagePlacement, FormatRatingDelta(totalDelta));
         }
 
         private List<BgMatchRow> FilterRows(IReadOnlyList<BgMatchRow> rows)
@@ -499,7 +682,7 @@ namespace HDTplugins.Views
             else
             {
                 var weekStart = GetWeekStart(_anchorDate);
-                _dateLabel.Content = weekStart.ToString("yyyy-MM-dd") + " ~ " + weekStart.AddDays(6).ToString("yyyy-MM-dd");
+                _dateLabel.Content = Loc.F("Common_WeekRangeFormat", weekStart, weekStart.AddDays(6));
             }
 
             _prevDateButton.IsEnabled = HasAdjacentAnchor(-1);
@@ -518,17 +701,18 @@ namespace HDTplugins.Views
 
         private void RefreshVersionButton()
         {
+            var archive = _store.CurrentArchive ?? _store.GetLatestRecordedArchiveForDisplay();
             var stack = new StackPanel();
             stack.Children.Add(new TextBlock
             {
-                Text = "版本信息",
+                Text = Loc.S("VersionInfo_Title"),
                 Foreground = new SolidColorBrush(Color.FromRgb(247, 245, 241)),
                 FontSize = 15,
                 FontWeight = FontWeights.SemiBold
             });
             stack.Children.Add(new TextBlock
             {
-                Text = _store.CurrentArchive != null ? _store.CurrentArchive.DisplayName : "season12 patch35.0",
+                Text = archive != null ? archive.DisplayName : Loc.S("VersionInfo_NoMoreData"),
                 Foreground = Brushes.White,
                 FontSize = 16,
                 Margin = new Thickness(0, 8, 0, 0),
@@ -543,7 +727,7 @@ namespace HDTplugins.Views
             var archives = _store.GetRecordedArchives();
             if (archives.Count == 0)
             {
-                menu.Items.Add(new MenuItem { Header = "暂无更多版本数据", IsEnabled = false });
+                menu.Items.Add(new MenuItem { Header = Loc.S("VersionInfo_NoMoreData"), IsEnabled = false });
             }
             else
             {
@@ -619,7 +803,7 @@ namespace HDTplugins.Views
 
             _currentSection = SidebarSection.History;
             RefreshSectionButtons();
-            _sectionTitle.Text = "对局详情";
+            _sectionTitle.Text = Loc.S("MatchDetail_Title");
             _historyToolbar.Visibility = Visibility.Collapsed;
 
             var scrollViewer = new ScrollViewer
@@ -653,7 +837,7 @@ namespace HDTplugins.Views
 
             var backButton = new Button
             {
-                Content = "返回",
+                Content = Loc.S("Common_Back"),
                 Width = 92,
                 Height = 42,
                 Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
@@ -675,8 +859,8 @@ namespace HDTplugins.Views
 
             var infoPanel = new StackPanel { HorizontalAlignment = HorizontalAlignment.Right };
             Grid.SetColumn(infoPanel, 2);
-            infoPanel.Children.Add(CreateHeaderBadge("对局时间: " + FormatTimestamp(snapshot.Timestamp)));
-            infoPanel.Children.Add(CreateHeaderBadge(string.Format("排名: {0}   分数: {1}   分数变化: {2}", snapshot.Placement, snapshot.RatingAfter, snapshot.RatingDelta > 0 ? "+" + snapshot.RatingDelta : snapshot.RatingDelta.ToString()), new Thickness(0, 10, 0, 0)));
+            infoPanel.Children.Add(CreateHeaderBadge(Loc.F("MatchDetail_TimeFormat", FormatTimestamp(snapshot.Timestamp))));
+            infoPanel.Children.Add(CreateHeaderBadge(Loc.F("MatchDetail_HeaderStatsFormat", snapshot.Placement, snapshot.RatingAfter, FormatRatingDelta(snapshot.RatingDelta)), new Thickness(0, 10, 0, 0)));
             grid.Children.Add(infoPanel);
             return grid;
         }
@@ -706,10 +890,10 @@ namespace HDTplugins.Views
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             section.Child = grid;
 
-            grid.Children.Add(CreateInfoText("选用英雄：" + StatsStore.GetCardName(snapshot.HeroCardId)));
+            grid.Children.Add(CreateInfoText(Loc.F("MatchDetail_SelectedHeroFormat", GameTextService.GetCardName(snapshot.HeroCardId, snapshot.HeroName))));
             if (!string.IsNullOrWhiteSpace(snapshot.HeroPowerCardId) && !string.Equals(snapshot.HeroPowerCardId, snapshot.InitialHeroPowerCardId, StringComparison.OrdinalIgnoreCase))
             {
-                var finalPower = CreateInfoText("最终英雄技能：" + StatsStore.GetCardName(snapshot.HeroPowerCardId));
+                var finalPower = CreateInfoText(Loc.F("MatchDetail_FinalHeroPowerFormat", GameTextService.GetCardName(snapshot.HeroPowerCardId, snapshot.HeroPowerCardId)));
                 Grid.SetColumn(finalPower, 1);
                 grid.Children.Add(finalPower);
             }
@@ -740,7 +924,7 @@ namespace HDTplugins.Views
             topGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             topGrid.Children.Add(new TextBlock
             {
-                Text = "终局阵容：",
+                Text = Loc.S("MatchDetail_FinalBoard"),
                 FontSize = 18,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = Brushes.White
@@ -769,9 +953,10 @@ namespace HDTplugins.Views
             border.ToolTip = BuildMinionToolTip(minion);
             var stack = new StackPanel();
             border.Child = stack;
+            var minionName = ResolveMinionName(minion);
             stack.Children.Add(new TextBlock
             {
-                Text = (minion.IsGolden ? GetGoldPrefix() : string.Empty) + SafeText(minion.Name, StatsStore.GetCardName(minion.CardId)),
+                Text = (minion.IsGolden ? GetGoldPrefix() : string.Empty) + minionName,
                 Foreground = Brushes.White,
                 FontWeight = FontWeights.SemiBold,
                 TextWrapping = TextWrapping.Wrap,
@@ -779,7 +964,7 @@ namespace HDTplugins.Views
             });
             stack.Children.Add(new TextBlock
             {
-                Text = "攻击",
+                Text = Loc.S("Minion_Attack"),
                 Foreground = Brushes.White,
                 FontSize = 11,
                 Margin = new Thickness(0, 10, 0, 0)
@@ -794,7 +979,7 @@ namespace HDTplugins.Views
             });
             stack.Children.Add(new TextBlock
             {
-                Text = "生命",
+                Text = Loc.S("Minion_Health"),
                 Foreground = Brushes.White,
                 FontSize = 11,
                 Margin = new Thickness(0, 8, 0, 0)
@@ -813,16 +998,18 @@ namespace HDTplugins.Views
         private object BuildMinionToolTip(BgBoardMinionSnapshot minion)
         {
             var keywords = minion.Keywords?.ToDisplayTokens() ?? Array.Empty<string>();
+            var minionName = ResolveMinionName(minion);
+            var raceName = ResolveMinionRace(minion);
             return string.Join(Environment.NewLine, new[]
             {
-                "名称: " + SafeText(minion.Name, StatsStore.GetCardName(minion.CardId)),
-                "ID: " + SafeText(minion.CardId, "-"),
-                "种族: " + SafeText(minion.Race, "-"),
-                "是否金卡: " + (minion.IsGolden ? "是" : "否"),
-                "站位: " + minion.Position.ToString(CultureInfo.InvariantCulture),
-                "攻击力: " + minion.Attack.ToString(CultureInfo.InvariantCulture),
-                "生命值: " + minion.Health.ToString(CultureInfo.InvariantCulture),
-                "关键词: " + (keywords.Count == 0 ? "无" : string.Join(", ", keywords))
+                Loc.F("MinionTooltip_NameFormat", minionName),
+                Loc.F("MinionTooltip_IdFormat", SafeText(minion.CardId, "-")),
+                Loc.F("MinionTooltip_RaceFormat", SafeText(raceName, "-")),
+                Loc.F("MinionTooltip_GoldenFormat", minion.IsGolden ? Loc.S("MinionTooltip_GoldenYes") : Loc.S("MinionTooltip_GoldenNo")),
+                Loc.F("MinionTooltip_PositionFormat", minion.Position.ToString(CultureInfo.InvariantCulture)),
+                Loc.F("MinionTooltip_AttackFormat", minion.Attack.ToString(CultureInfo.InvariantCulture)),
+                Loc.F("MinionTooltip_HealthFormat", minion.Health.ToString(CultureInfo.InvariantCulture)),
+                Loc.F("MinionTooltip_KeywordsFormat", keywords.Count == 0 ? Loc.S("Common_None") : string.Join(", ", keywords))
             });
         }
         private UIElement BuildTagEditorPanel(BgSnapshot snapshot, List<string> combinedTags)
@@ -864,7 +1051,7 @@ namespace HDTplugins.Views
             var menu = new ContextMenu();
             if (combinedTags.Count >= 5)
             {
-                menu.Items.Add(new MenuItem { Header = "最多支持 5 个 TAG", IsEnabled = false });
+                menu.Items.Add(new MenuItem { Header = Loc.S("Tags_MaxReached"), IsEnabled = false });
                 return menu;
             }
 
@@ -872,7 +1059,7 @@ namespace HDTplugins.Views
             var available = _store.GetAvailableTags().Where(tag => !current.Contains(tag)).ToList();
             if (available.Count == 0)
             {
-                menu.Items.Add(new MenuItem { Header = "没有可添加的 TAG", IsEnabled = false });
+                menu.Items.Add(new MenuItem { Header = Loc.S("Tags_NoAvailable"), IsEnabled = false });
                 return menu;
             }
 
@@ -937,7 +1124,7 @@ namespace HDTplugins.Views
             var panel = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right };
             var list = (tags ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Take(5).ToList();
             if (list.Count == 0 && includeEmptyPlaceholder)
-                panel.Children.Add(CreateTagChip("无 TAG"));
+                panel.Children.Add(CreateTagChip(Loc.S("Tags_Empty")));
             else
                 foreach (var tag in list)
                     panel.Children.Add(CreateTagChip(tag));
@@ -991,7 +1178,7 @@ namespace HDTplugins.Views
             section.Child = stack;
             stack.Children.Add(new TextBlock
             {
-                Text = "升本信息",
+                Text = Loc.S("MatchDetail_TavernSection"),
                 FontSize = 18,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = Brushes.White,
@@ -1013,8 +1200,8 @@ namespace HDTplugins.Views
         {
             var upgrades = (snapshot.TavernUpgradeTimeline ?? new List<BgTavernUpgradePoint>()).OrderBy(x => x.Turn).ToList();
             if (upgrades.Count == 0)
-                return "回合-酒馆等级: 暂无数据";
-            return "回合-酒馆等级: " + string.Join(" / ", upgrades.Select(x => x.Turn + "-" + x.TavernTier));
+                return Loc.S("MatchDetail_TavernUpgradeEmpty");
+            return Loc.F("MatchDetail_TavernUpgradeFormat", string.Join(" / ", upgrades.Select(x => x.Turn + "-" + x.TavernTier)));
         }
 
         private UIElement BuildUpgradeChart(BgSnapshot snapshot)
@@ -1031,7 +1218,7 @@ namespace HDTplugins.Views
             {
                 host.Child = new TextBlock
                 {
-                    Text = "暂无升本数据",
+                    Text = Loc.S("MatchDetail_TavernChartEmpty"),
                     Foreground = Brushes.White,
                     VerticalAlignment = VerticalAlignment.Center,
                     HorizontalAlignment = HorizontalAlignment.Center,
@@ -1074,7 +1261,7 @@ namespace HDTplugins.Views
                     Width = 10,
                     Height = 10,
                     Fill = Brushes.White,
-                    ToolTip = $"回合数: {point.Turn}\n酒馆等级: {point.TavernTier}"
+                    ToolTip = Loc.F("MatchDetail_TavernTooltipFormat", point.Turn, Environment.NewLine, point.TavernTier)
                 };
                 Canvas.SetLeft(dot, x - 5);
                 Canvas.SetTop(dot, y - 5);
@@ -1118,9 +1305,32 @@ namespace HDTplugins.Views
             return string.IsNullOrWhiteSpace(value) ? fallback : value;
         }
 
+        private static string ResolveMinionName(BgBoardMinionSnapshot minion)
+        {
+            if (minion == null)
+                return string.Empty;
+
+            return GameTextService.GetCardName(minion.CardId, SafeText(minion.Name, minion.CardId));
+        }
+
+        private static string ResolveMinionRace(BgBoardMinionSnapshot minion)
+        {
+            if (minion == null)
+                return string.Empty;
+
+            return GameTextService.GetRaceNameFromCardId(minion.CardId, minion.Race);
+        }
+
+        private static string FormatRatingDelta(int ratingDelta)
+        {
+            return ratingDelta > 0
+                ? Loc.F("Common_RatingDeltaPositive", ratingDelta)
+                : ratingDelta.ToString(CultureInfo.CurrentCulture);
+        }
+
         private static string GetGoldPrefix()
         {
-            return CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh" ? "(金)" : "(gold) ";
+            return Loc.S("Common_GoldPrefix");
         }
 
         private static DateTime GetWeekStart(DateTime date)
