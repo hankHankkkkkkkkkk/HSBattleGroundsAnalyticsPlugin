@@ -367,3 +367,10 @@ FodyWeavers.xsd
 .tmpbuild/
 .build_tmp/
 AGENT.md
+tmpbuild/
+tmpbuild_verify/
+tmpobj_verify/
+tmp_*.ps1
+HDT_plugins/build_tmp/
+HDT_plugins/tmpbuild/
+HDT_plugins/tmpobj/

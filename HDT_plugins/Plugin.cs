@@ -17,7 +17,7 @@ namespace HDTplugins
         public string Name => Loc.S("Plugin_Name");
         public string Description => Loc.S("Plugin_Description");
         public string Author => "Hank";
-        public Version Version => new Version(0, 8, 5);
+        public Version Version => new Version(0, 8, 6);
         public string ButtonText => Loc.S("Plugin_ButtonText");
         public MenuItem MenuItem => _menuItem;
 
@@ -28,6 +28,7 @@ namespace HDTplugins
         private PluginSettingsService _settingsService;
         private BgStatsWindow _statsWindow;
         private MenuItem _menuItem;
+        private DispatcherTimer _startupGameTextRefreshTimer;
 
         public void OnLoad()
         {
@@ -40,6 +41,7 @@ namespace HDTplugins
             _settingsService.Initialize(_store.TablesDirectoryPath);
             LocalizationService.Initialize(_settingsService.Settings.Language);
             GameTextService.Initialize();
+            ScheduleStartupGameTextRefresh();
             _probe = new BgGameProbe();
             _menuItem = CreateQuickOpenMenuItem();
             LocalizationService.LanguageChanged += OnLanguageChanged;
@@ -56,6 +58,7 @@ namespace HDTplugins
         {
             _enabled = false;
             LocalizationService.LanguageChanged -= OnLanguageChanged;
+            StopStartupGameTextRefreshTimer();
             TryCloseWindow();
             HdtLog.Info("[Hank的log信息] 插件已卸载（已关闭开关）");
         }
@@ -144,6 +147,42 @@ namespace HDTplugins
             _statsWindow.SyncVersionSelection(_store.CurrentArchive?.Key);
             _statsWindow.Show();
             _statsWindow.Activate();
+            ScheduleStartupGameTextRefresh();
+        }
+
+        private void ScheduleStartupGameTextRefresh()
+        {
+            var dispatcher = Application.Current?.Dispatcher;
+            if (dispatcher == null)
+                return;
+
+            dispatcher.BeginInvoke(new Action(() =>
+            {
+                StopStartupGameTextRefreshTimer();
+                _startupGameTextRefreshTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher)
+                {
+                    Interval = TimeSpan.FromSeconds(1.5)
+                };
+                _startupGameTextRefreshTimer.Tick += StartupGameTextRefreshTimerOnTick;
+                _startupGameTextRefreshTimer.Start();
+            }));
+        }
+
+        private void StartupGameTextRefreshTimerOnTick(object sender, EventArgs e)
+        {
+            StopStartupGameTextRefreshTimer();
+            GameTextService.ForceRefreshCurrentLanguage();
+            _statsWindow?.Reload();
+        }
+
+        private void StopStartupGameTextRefreshTimer()
+        {
+            if (_startupGameTextRefreshTimer == null)
+                return;
+
+            _startupGameTextRefreshTimer.Stop();
+            _startupGameTextRefreshTimer.Tick -= StartupGameTextRefreshTimerOnTick;
+            _startupGameTextRefreshTimer = null;
         }
 
         private MenuItem CreateQuickOpenMenuItem()

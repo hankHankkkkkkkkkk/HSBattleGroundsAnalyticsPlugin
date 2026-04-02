@@ -29,8 +29,22 @@ namespace HDTplugins.Services
             ApplyCulture(LocalizationService.CurrentCulture);
         }
 
+        public static void ForceRefreshCurrentLanguage()
+        {
+            var locale = ToLocale(LocalizationService.CurrentCulture);
+            lock (SyncRoot)
+            {
+                LoadedLocales.Remove(locale);
+                EnsureLocaleLoaded(locale);
+                TrySetHdtSelectedLanguage(locale);
+                _currentLocale = locale;
+            }
+        }
+
         public static string GetCardName(string cardId, string fallback = null)
         {
+            EnsureCurrentLanguageReady();
+
             if (string.IsNullOrWhiteSpace(cardId))
                 return string.IsNullOrWhiteSpace(fallback) ? string.Empty : fallback;
 
@@ -52,6 +66,8 @@ namespace HDTplugins.Services
 
         public static string GetRaceNameFromCardId(string cardId, string fallback = null)
         {
+            EnsureCurrentLanguageReady();
+
             if (string.IsNullOrWhiteSpace(cardId))
                 return FirstNonEmpty(fallback, string.Empty);
 
@@ -75,6 +91,8 @@ namespace HDTplugins.Services
 
         public static string GetRaceName(string raceValue, string fallback = null)
         {
+            EnsureCurrentLanguageReady();
+
             if (string.IsNullOrWhiteSpace(raceValue))
                 return FirstNonEmpty(fallback, string.Empty);
 
@@ -86,6 +104,8 @@ namespace HDTplugins.Services
 
         public static string GetRaceName(Race race, string fallback = null)
         {
+            EnsureCurrentLanguageReady();
+
             if (race == Race.INVALID || race == Race.BLANK)
                 return FirstNonEmpty(fallback, string.Empty);
 
@@ -113,6 +133,11 @@ namespace HDTplugins.Services
                 TrySetHdtSelectedLanguage(locale);
                 _currentLocale = locale;
             }
+        }
+
+        private static void EnsureCurrentLanguageReady()
+        {
+            ApplyCulture(LocalizationService.CurrentCulture);
         }
 
         private static void EnsureLocaleLoaded(Locale locale)
