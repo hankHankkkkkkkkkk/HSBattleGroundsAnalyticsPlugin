@@ -96,3 +96,6 @@ publish/
 *.zip
 *.rar
 *.7z
+
+## Codex
+AGENTS.md
