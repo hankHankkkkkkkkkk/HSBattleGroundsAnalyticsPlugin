@@ -159,6 +159,27 @@
   <data name="Common_WeekRangeFormat" xml:space="preserve">
     <value>{0:yyyy-MM-dd} ~ {1:yyyy-MM-dd}</value>
   </data>
+  <data name="Common_TimeLabel" xml:space="preserve">
+    <value>对局时间</value>
+  </data>
+  <data name="Common_PlacementLabel" xml:space="preserve">
+    <value>排名</value>
+  </data>
+  <data name="Common_RatingLabel" xml:space="preserve">
+    <value>分数</value>
+  </data>
+  <data name="Common_RatingDeltaLabel" xml:space="preserve">
+    <value>分数变化</value>
+  </data>
+  <data name="Common_MatchesLabel" xml:space="preserve">
+    <value>对局数</value>
+  </data>
+  <data name="Common_AvgPlacementLabel" xml:space="preserve">
+    <value>平均排名</value>
+  </data>
+  <data name="Common_PlacementDeltaLabel" xml:space="preserve">
+    <value>变化</value>
+  </data>
   <data name="Settings_Title" xml:space="preserve">
     <value>酒馆数据分析 - 设置</value>
   </data>
@@ -350,5 +371,62 @@
   </data>
   <data name="GameRace_BLANK" xml:space="preserve">
     <value />
+  </data>
+  <data name="RaceStats_WorstSynergy" xml:space="preserve">
+    <value>较差配合种族</value>
+  </data>
+  <data name="RaceStats_SynergyItemFormat" xml:space="preserve">
+    <value>{0}（均排 {1}，变化 {2}）</value>
+  </data>
+  <data name="RaceStats_HeaderRace" xml:space="preserve">
+    <value>种族</value>
+  </data>
+  <data name="RaceStats_TagItemFormat" xml:space="preserve">
+    <value>{0}（{1}）</value>
+  </data>
+  <data name="RaceStats_CardItemFormat" xml:space="preserve">
+    <value>{0} x{1}</value>
+  </data>
+  <data name="RaceStats_HeaderFirstRate" xml:space="preserve">
+    <value>吃鸡率</value>
+  </data>
+  <data name="Settings_ScoreLineLabel" xml:space="preserve">
+    <value>得分线</value>
+  </data>
+  <data name="Settings_ScoreLineTop3" xml:space="preserve">
+    <value>3.5（前三加分）</value>
+  </data>
+  <data name="Settings_ScoreLineTop4" xml:space="preserve">
+    <value>4.5（前四加分）</value>
+  </data>
+  <data name="RaceStats_TopLineups" xml:space="preserve">
+    <value>高频流派 TAG</value>
+  </data>
+  <data name="RaceStats_HeaderScoreRate" xml:space="preserve">
+    <value>得分率</value>
+  </data>
+  <data name="RaceStats_DetailMatches" xml:space="preserve">
+    <value>对局数：{0}</value>
+  </data>
+  <data name="Settings_ScoreLineTop2" xml:space="preserve">
+    <value>2.5（前二加分）</value>
+  </data>
+  <data name="RaceStats_TopCards" xml:space="preserve">
+    <value>高频终局卡牌</value>
+  </data>
+  <data name="RaceStats_BestSynergy" xml:space="preserve">
+    <value>最佳配合种族</value>
+  </data>
+  <data name="RaceStats_NoData" xml:space="preserve">
+    <value>无数据</value>
+  </data>
+  <data name="RaceStats_ScoreLineHint" xml:space="preserve">
+    <value>得分率判定：{0}</value>
+  </data>
+  <data name="RaceStats_NoSynergyData" xml:space="preserve">
+    <value>暂无配合数据</value>
+  </data>
+  <data name="RaceStats_HeaderAvgPlacement" xml:space="preserve">
+    <value>平均排名</value>
   </data>
 </root>

@@ -1,17 +1,80 @@
-# Localization rules
-- UI strings for the plugin must use resx resources.
-- Do not hardcode Chinese or English strings in XAML or C#.
-- Use key format: Page_Area_Meaning.
-- Prefer minimal diffs.
-- Do not change gameplay logic when implementing localization.
-- Do not create custom translation tables for Hearthstone card/hero names in this task.
-- Keep code compatible with current WPF project structure.
+# AGENTS.md
 
-# Cleanup rules
-- Prefer safety over aggressiveness when cleaning the repo.
-- Never delete files if their purpose is unclear.
-- Treat WPF/XAML indirect references as real usage.
-- Do not run destructive git commands.
-- Update .gitignore for build artifacts and local temp files.
-- Keep diffs small and compilation-safe.
-- For cleanup tasks, always produce a report before deleting anything.
+## 项目概览
+该仓库是一个 Hearthstone Deck Tracker 插件项目，重点围绕酒馆战棋功能展开。
+开发过程中参考HDT官方的github和相关文档的实现方式。
+
+## 开发环境
+- 主要 IDE：Visual Studio
+- 主要运行目标：Windows 上的 HDT 插件宿主环境
+- 改动需保持与现有 solution 和 project 结构兼容
+
+## 总体规则
+- 优先采用最小、精准、便于审查的改动。
+- 除非任务明确要求，否则不要重构现有架构，也不要引入不必要的抽象。
+- 不要创建额外的 tmp/test/demo 文件，也不要新建文件夹，除非任务确实需要。
+- 不确定某个文件是否可以安全修改时，不要冒险修改，应在结果中说明风险。
+
+## 开发习惯
+- 简单调整直接做
+- 复杂的需求和改动先提供方案，经过批准后再实施
+- 发现更优路径时主动建议，不只按照指令行事
+
+## 安全边界
+- 不要删除用途不明确的文件。
+- 不要为了小任务重写大面积代码。
+- 不要修改项目结构、命名空间、程序集引用，除非任务确实要求。
+- 将 WPF/XAML 的间接引用视为真实使用；资源文件、绑定、转换器、样式和 code-behind 都应视为敏感内容。
+- 不要静默修改持久化格式或重命名已保存字段；如需调整数据结构，必须说明迁移影响。
+- 不要删除本地化资源、JSON 数据文件或配置文件，除非明确要求。
+- 对于清理类任务，先报告，再删除。
+
+## 构建与验证
+- 优先以最小相关范围验证改动。
+- 如需构建，优先使用针对具体 project/solution 的定向构建命令。
+- 不要运行破坏性命令，也不要做仓库范围的清理，除非明确要求。
+- 不要假设 Codex 环境中一定存在 HDT 运行时。
+
+## 本地化要求
+- 所有新的面向用户功能都必须接入现有本地化系统。
+- UI 文本应使用现有的 resx / resource 机制，不要在 XAML、C#、JSON 默认值或 view model 中硬编码中文或英文字符串。
+- 使用稳定的资源键命名方式，例如 `Page_Area_Meaning`。
+- 如果新增了用户可见文本，必须在同一任务中同步更新本地化资源。
+- 如果当前本地化接入方式不明确，不要使用未本地化的临时方案，应停止并报告问题。
+- 实现本地化时，不要改变游戏逻辑或统计逻辑。
+
+## WPF / UI
+- 保持现有 WPF/XAML 结构兼容。
+- 不要破坏绑定、资源字典、转换器或 code-behind 的连接关系。
+- 优先做渐进式 UI 修改，而不是大规模重写。
+- 尽量将 UI 逻辑与统计/数据逻辑分离。
+- 除非明确要求，否则不要增加视觉复杂度。
+
+## 数据与统计
+- 尽可能保持现有 JSON 数据的向后兼容性。
+- 优先使用显式的版本/赛季映射逻辑，而不是脆弱的隐式解析。
+- 保持数据处理可读、可测试。
+- 除非明确要求，否则不要引入数据库依赖。
+
+## 任务偏好
+适合：
+- 小型功能改动
+- 在现有 JSON / 统计逻辑中接入新字段
+- 安全地本地化 UI 文本
+- 清理冗余本地临时文件
+- 准备 PR 描述
+- 审查空安全 / 路径安全 / 序列化问题
+
+除非明确要求，否则避免：
+- 大规模重构
+- 大范围修改持久化格式
+- 替换本地化系统
+- 重构 WPF 项目布局
+- 大量删除文件
+
+## 交付报告
+完成任务时，说明：
+- 修改了哪些文件
+- 改变了哪些行为
+- 做了哪些假设
+- 是否存在后续风险或额外验证需求

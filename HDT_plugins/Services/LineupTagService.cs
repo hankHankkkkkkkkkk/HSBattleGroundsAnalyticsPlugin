@@ -13,20 +13,20 @@ namespace HDTplugins.Services
     public class LineupTagService
     {
         private readonly JavaScriptSerializer _serializer = new JavaScriptSerializer();
-        private string _configPath;
+        private const string ResourceName = "HDT_plugins.Tables.lineup_tags.json";
         private LineupTagConfig _config = new LineupTagConfig();
 
-        public string ConfigPath => _configPath;
+        public string ConfigPath => "embedded:" + ResourceName;
 
         public void Initialize(string tablesDir)
         {
-            _configPath = Path.Combine(tablesDir, "lineup_tags.json");
-            EnsureConfigFile();
             Reload();
+            HdtLog.Info("[BGStats] TAG 配置来源: " + ConfigPath);
         }
 
         public IReadOnlyList<string> GetAvailableTags()
         {
+            Reload();
             var tags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var tag in _config.AvailableTags ?? new List<string>())
             {
@@ -59,79 +59,13 @@ namespace HDTplugins.Services
                 .ToList();
         }
 
-        private void EnsureConfigFile()
-        {
-            if (File.Exists(_configPath))
-                return;
-
-            var template = string.Join(Environment.NewLine, new[]
-            {
-                "// lineup_tags.json 支持手动维护可选 TAG 和自动识别规则。",
-                "// 注释写法：仅支持整行 // 注释，请不要把注释放在 JSON 行尾。",
-                "// 规则结构说明：",
-                "// 1. availableTags: 可在详情页下拉中手动添加的 TAG 列表。",
-                "// 2. rules: 自动识别规则列表，命中后会自动追加 TAG，最多取优先级最高的 3 个。",
-                "// 3. conditions 支持两类写法：",
-                "//    A. 组合条件：{ \"op\": \"all\" | \"any\", \"items\": [ ... ] }",
-                "//    B. 原子条件：{ \"type\": \"minionRaceCountAtLeast\", \"race\": \"MECHANICAL\", \"value\": 4 }",
-                "// race 可用值：BEAST(野兽), DEMON(恶魔), DRAGON(龙), ELEMENTAL/ELEMENT(元素), MECHANICAL(机械), MURLOC(鱼人), NAGA(娜迦), PIRATE(海盗), QUILBOAR(野猪人), TOTEM(图腾), UNDEAD(亡灵), ALL(全部/融合怪)。",
-                "// 可用 type：",
-                "// - minionRaceCountAtLeast: 终局阵容中某种族数量至少 value",
-                "// - cardIdExists: 终局阵容中存在指定 cardId",
-                "// - cardIdCountAtLeast: 终局阵容中 cardId 或 cardIds 的总数量至少 value",
-                "// - goldenCountAtLeast: 终局阵容中金色随从数量至少 value",
-                "// - isGolden: 判断是否存在金卡。可配 isGolden=true/false；若同时提供 cardId，则判断指定卡是否为金卡",
-                "// - heroIs: 英雄 cardId 等于 heroCardId",
-                "// - heroPowerIs: 终局英雄技能 cardId 等于 heroPowerCardId",
-                "// - tavernTierAtLeast: 本局曾到达的最高酒馆等级至少 value",
-                "// - totalMinionsAtLeast: 终局阵容随从数量至少 value",
-                "// - keywordCountAtLeast: 带指定关键词(keyword)的随从数量至少 value，keyword 可写 taunt/divineshield/poisonous/reborn/windfury/megawindfury/stealth/cleave",
-                "{",
-                "  \"availableTags\": [",
-                "    \"机械体系\",",
-                "    \"亡灵体系\",",
-                "    \"圣盾流\",",
-                "    \"龙体系\"",
-                "  ],",
-                "  \"rules\": [",
-                "    {",
-                "      \"tag\": \"机械体系\",",
-                "      \"priority\": 100,",
-                "      \"conditions\": {",
-                "        \"type\": \"minionRaceCountAtLeast\",",
-                "        \"race\": \"MECHANICAL\",",
-                "        \"value\": 4",
-                "      }",
-                "    },",
-                "    {",
-                "      \"tag\": \"圣盾流\",",
-                "      \"priority\": 80,",
-                "      \"conditions\": {",
-                "        \"type\": \"keywordCountAtLeast\",",
-                "        \"keyword\": \"divineshield\",",
-                "        \"value\": 3",
-                "      }",
-                "    }",
-                "  ]",
-                "}"
-            });
-
-            Directory.CreateDirectory(Path.GetDirectoryName(_configPath));
-            File.WriteAllText(_configPath, template, Encoding.UTF8);
-        }
-
         private void Reload()
         {
             try
             {
-                if (string.IsNullOrWhiteSpace(_configPath) || !File.Exists(_configPath))
-                {
-                    _config = new LineupTagConfig();
-                    return;
-                }
-
                 var json = string.Join(Environment.NewLine,
-                    File.ReadAllLines(_configPath, Encoding.UTF8)
+                    EmbeddedJsonLoader.ReadRequiredText(ResourceName)
+                        .Split(new[] { "\r\n", "\n" }, StringSplitOptions.None)
                         .Where(line => !line.TrimStart().StartsWith("//", StringComparison.Ordinal)));
 
                 _config = string.IsNullOrWhiteSpace(json)
@@ -141,7 +75,7 @@ namespace HDTplugins.Services
             catch (Exception ex)
             {
                 _config = new LineupTagConfig();
-                HdtLog.Error("[BGStats] 读取 TAG 规则失败: " + ex.Message);
+                HdtLog.Error("[BGStats] 读取嵌入式 TAG 规则失败: " + ex.Message);
             }
         }
 

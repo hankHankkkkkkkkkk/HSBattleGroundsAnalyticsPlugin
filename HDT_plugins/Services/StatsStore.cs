@@ -35,6 +35,7 @@ namespace HDTplugins.Services
         public string TagConfigPath => _lineupTagService.ConfigPath;
         public string TablesDirectoryPath => _tablesDir;
 
+
         public void Initialize()
         {
             try
@@ -62,13 +63,13 @@ namespace HDTplugins.Services
                 MigrateIfNeeded(oldFinal, _finalFilePath);
                 MigrateIfNeeded(oldPending, _pendingFilePath);
 
-                HdtLog.Info($"[BGStats] 数据目录(AppData Local)：{_dataDir}");
-                HdtLog.Info($"[BGStats] 当前版本归档：{CurrentArchive?.DisplayName}");
-                HdtLog.Info($"[BGStats] 配置目录：{_tablesDir}");
+                HdtLog.Info($"[BGStats] æ•°æ®ç›®å½•(AppData Local)ï¼š{_dataDir}");
+                HdtLog.Info($"[BGStats] å½“å‰ç‰ˆæœ¬å½’æ¡£ï¼š{CurrentArchive?.DisplayName}");
+                HdtLog.Info($"[BGStats] é…ç½®ç›®å½•ï¼š{_tablesDir}");
             }
             catch (Exception ex)
             {
-                HdtLog.Error("[BGStats] Initialize 失败: " + ex.Message);
+                HdtLog.Error("[BGStats] Initialize å¤±è´¥: " + ex.Message);
             }
         }
 
@@ -80,6 +81,47 @@ namespace HDTplugins.Services
         public IReadOnlyList<string> GetDisplayTags(BgSnapshot snapshot)
         {
             return MergeTags(snapshot).Take(5).ToList();
+        }
+
+        public IReadOnlyList<RaceStatsRow> LoadRaceStats(double scoreLine)
+        {
+            var normalizedScoreLine = NormalizeScoreLine(scoreLine);
+            var snapshots = LoadSnapshots();
+            var raceDefs = GetRaceDefinitions();
+            var result = new List<RaceStatsRow>();
+
+            foreach (var raceDef in raceDefs)
+            {
+                var raceSnapshots = snapshots
+                    .Where(snapshot => SnapshotHasRaceTag(snapshot, raceDef))
+                    .ToList();
+
+                var row = new RaceStatsRow
+                {
+                    RaceCode = raceDef.Code,
+                    RaceTag = raceDef.Tag,
+                    RaceName = GameTextService.GetRaceName(raceDef.Code, raceDef.DisplayFallback),
+                    MatchCount = raceSnapshots.Count
+                };
+
+                if (raceSnapshots.Count > 0)
+                {
+                    row.AveragePlacement = raceSnapshots.Average(x => x.Placement);
+                    row.FirstRate = raceSnapshots.Count(x => x.Placement == 1) / (double)raceSnapshots.Count;
+                    row.ScoreRate = raceSnapshots.Count(x => x.Placement < normalizedScoreLine) / (double)raceSnapshots.Count;
+                    row.TopCards = BuildRaceTopCards(raceSnapshots);
+                    row.TopLineups = BuildRaceTopLineups(raceSnapshots, raceDef);
+                    PopulateRaceSynergies(row, raceSnapshots, snapshots, raceDefs);
+                }
+
+                result.Add(row);
+            }
+
+            return result
+                .OrderBy(x => x.HasData ? 0 : 1)
+                .ThenBy(x => x.AveragePlacement ?? double.MaxValue)
+                .ThenBy(x => x.RaceName, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
         }
 
         public IReadOnlyList<ArchiveVersionInfo> GetAvailableArchives()
@@ -126,7 +168,7 @@ namespace HDTplugins.Services
         {
             var detected = ResolveBestArchiveForCurrentVersion();
             SetActiveMatchArchive(detected);
-            HdtLog.Info($"[BGStats] 当前对局版本：{_activeMatchArchive?.DisplayName}");
+            HdtLog.Info($"[BGStats] å½“å‰å¯¹å±€ç‰ˆæœ¬ï¼š{_activeMatchArchive?.DisplayName}");
             return _activeMatchArchive;
         }
 
@@ -215,7 +257,7 @@ namespace HDTplugins.Services
             }
             catch (Exception ex)
             {
-                HdtLog.Error("[BGStats] UpdateManualTags 失败: " + ex.Message);
+                HdtLog.Error("[BGStats] UpdateManualTags å¤±è´¥: " + ex.Message);
                 return false;
             }
         }
@@ -245,7 +287,7 @@ namespace HDTplugins.Services
             }
             catch (Exception ex)
             {
-                HdtLog.Error("[BGStats] WritePendingIfNeeded 失败: " + ex.Message);
+                HdtLog.Error("[BGStats] WritePendingIfNeeded å¤±è´¥: " + ex.Message);
             }
         }
 
@@ -298,7 +340,7 @@ namespace HDTplugins.Services
             }
             catch (Exception ex)
             {
-                HdtLog.Error("[BGStats] FinalizeIfPossible 失败: " + ex.Message);
+                HdtLog.Error("[BGStats] FinalizeIfPossible å¤±è´¥: " + ex.Message);
             }
         }
 
@@ -513,6 +555,127 @@ namespace HDTplugins.Services
             return result;
         }
 
+        private static double NormalizeScoreLine(double scoreLine)
+        {
+            if (Math.Abs(scoreLine - 2.5) < 0.01)
+                return 2.5;
+            if (Math.Abs(scoreLine - 3.5) < 0.01)
+                return 3.5;
+            return 4.5;
+        }
+
+        private static IReadOnlyList<RaceDefinition> GetRaceDefinitions()
+        {
+            return new[]
+            {
+                new RaceDefinition("BEAST", "野兽"),
+                new RaceDefinition("DEMON", "恶魔"),
+                new RaceDefinition("DRAGON", "龙"),
+                new RaceDefinition("ELEMENTAL", "元素"),
+                new RaceDefinition("MECHANICAL", "机械", "Mech"),
+                new RaceDefinition("MURLOC", "鱼人"),
+                new RaceDefinition("NAGA", "娜迦", "Naga"),
+                new RaceDefinition("PIRATE", "海盗"),
+                new RaceDefinition("QUILBOAR", "野猪人"),
+                new RaceDefinition("UNDEAD", "亡灵")
+            };
+        }
+
+        private bool SnapshotHasRaceTag(BgSnapshot snapshot, RaceDefinition raceDef)
+        {
+            if (snapshot == null || raceDef == null)
+                return false;
+
+            return MergeTags(snapshot).Any(tag => string.Equals(tag, raceDef.Tag, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private List<RaceCardUsage> BuildRaceTopCards(IReadOnlyList<BgSnapshot> snapshots)
+        {
+            return snapshots
+                .Select(snapshot => (snapshot.FinalBoard ?? new List<BgBoardMinionSnapshot>())
+                    .Where(x => x != null && !string.IsNullOrWhiteSpace(x.CardId))
+                    .Select(x => x.CardId)
+                    .Distinct(StringComparer.OrdinalIgnoreCase))
+                .SelectMany(x => x)
+                .GroupBy(x => x, StringComparer.OrdinalIgnoreCase)
+                .Select(group => new RaceCardUsage
+                {
+                    CardId = group.Key,
+                    CardName = GameTextService.GetCardName(group.Key, group.Key),
+                    Count = group.Count(),
+                    Rate = snapshots.Count == 0 ? 0 : group.Count() / (double)snapshots.Count
+                })
+                .OrderByDescending(x => x.Rate)
+                .ThenByDescending(x => x.Count)
+                .ThenBy(x => x.CardName, StringComparer.CurrentCultureIgnoreCase)
+                .Take(3)
+                .ToList();
+        }
+
+        private List<RaceTagUsage> BuildRaceTopLineups(IReadOnlyList<BgSnapshot> snapshots, RaceDefinition currentRace)
+        {
+            return snapshots
+                .SelectMany(snapshot => MergeTags(snapshot)
+                    .Where(tag => !string.Equals(tag, currentRace.Tag, StringComparison.OrdinalIgnoreCase)))
+                .GroupBy(tag => tag, StringComparer.OrdinalIgnoreCase)
+                .Select(group => new RaceTagUsage
+                {
+                    Tag = group.Key,
+                    Count = group.Count(),
+                    Rate = snapshots.Count == 0 ? 0 : group.Count() / (double)snapshots.Count
+                })
+                .OrderByDescending(x => x.Count)
+                .ThenBy(x => x.Tag, StringComparer.CurrentCultureIgnoreCase)
+                .Take(3)
+                .ToList();
+        }
+
+        private void PopulateRaceSynergies(RaceStatsRow row, IReadOnlyList<BgSnapshot> raceSnapshots, IReadOnlyList<BgSnapshot> allSnapshots, IReadOnlyList<RaceDefinition> raceDefs)
+        {
+            if (row == null || !row.AveragePlacement.HasValue)
+                return;
+
+            var synergies = new List<RaceSynergyStat>();
+            foreach (var raceDef in raceDefs)
+            {
+                if (string.Equals(raceDef.Code, row.RaceCode, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var synergySnapshots = raceSnapshots
+                    .Where(snapshot => SnapshotHasRaceTag(snapshot, raceDef))
+                    .ToList();
+                if (synergySnapshots.Count == 0)
+                    continue;
+
+                var avgPlacement = synergySnapshots.Average(x => x.Placement);
+                synergies.Add(new RaceSynergyStat
+                {
+                    RaceCode = raceDef.Code,
+                    RaceName = GameTextService.GetRaceName(raceDef.Code, raceDef.DisplayFallback),
+                    MatchCount = synergySnapshots.Count,
+                    AveragePlacement = avgPlacement,
+                    PlacementDelta = avgPlacement - row.AveragePlacement.Value
+                });
+            }
+
+            row.BestSynergies = synergies
+                .OrderBy(x => x.PlacementDelta)
+                .ThenByDescending(x => x.MatchCount)
+                .Take(2)
+                .ToList();
+
+            var bestRaceCodes = new HashSet<string>(
+                row.BestSynergies.Select(x => x.RaceCode ?? string.Empty),
+                StringComparer.OrdinalIgnoreCase);
+
+            row.WorstSynergies = synergies
+                .Where(x => !bestRaceCodes.Contains(x.RaceCode ?? string.Empty))
+                .OrderByDescending(x => x.PlacementDelta)
+                .ThenByDescending(x => x.MatchCount)
+                .Take(2)
+                .ToList();
+        }
+
         private static IEnumerable<string> SanitizeTags(IEnumerable<string> tags, int maxCount)
         {
             return (tags ?? Array.Empty<string>())
@@ -685,8 +848,23 @@ namespace HDTplugins.Services
 
             return Environment.CurrentDirectory;
         }
+
+        private sealed class RaceDefinition
+        {
+            public RaceDefinition(string code, string tag, string displayFallback = null)
+            {
+                Code = code;
+                Tag = tag;
+                DisplayFallback = string.IsNullOrWhiteSpace(displayFallback) ? tag : displayFallback;
+            }
+
+            public string Code { get; }
+            public string Tag { get; }
+            public string DisplayFallback { get; }
+        }
     }
 }
+
 
 
 

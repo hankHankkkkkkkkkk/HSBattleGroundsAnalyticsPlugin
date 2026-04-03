@@ -9,6 +9,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
@@ -34,6 +35,14 @@ namespace HDTplugins.Views
             Day
         }
 
+        private enum RaceSortColumn
+        {
+            AveragePlacement,
+            Race,
+            FirstRate,
+            ScoreRate
+        }
+
         private readonly StatsStore _store;
         private readonly PluginSettingsService _settingsService;
         private readonly Dictionary<SidebarSection, Button> _sectionButtons = new Dictionary<SidebarSection, Button>();
@@ -53,7 +62,15 @@ namespace HDTplugins.Views
         private string _selectedMatchId;
         private SidebarSection _currentSection = SidebarSection.History;
         private HistoryRange _currentRange = HistoryRange.Season;
+        private RaceSortColumn _raceSortColumn = RaceSortColumn.AveragePlacement;
+        private bool _raceSortDescending;
+        private string _expandedRaceCode;
         private DateTime _anchorDate = DateTime.Today;
+        private static readonly Brush PositiveValueBrush = CreateBrush(88, 150, 96);
+        private static readonly Brush NegativeValueBrush = CreateBrush(198, 92, 84);
+        private static readonly Brush NeutralValueBrush = CreateBrush(138, 131, 121);
+        private static readonly Brush LightForegroundBrush = Brushes.White;
+        private static readonly Brush DarkForegroundBrush = CreateBrush(95, 88, 79);
 
         public event Action<string> OpenMatchDetailRequested;
 
@@ -109,7 +126,7 @@ namespace HDTplugins.Views
         public void Reload()
         {
             RefreshVersionButton();
-            if (_currentSection == SidebarSection.Settings)
+            if (_currentSection == SidebarSection.Settings || _currentSection == SidebarSection.Races)
             {
                 RebuildContent();
                 return;
@@ -335,6 +352,12 @@ namespace HDTplugins.Views
                 _currentSection = section;
                 if (section != SidebarSection.History)
                     _selectedMatchId = null;
+                if (section == SidebarSection.Races)
+                {
+                    _raceSortColumn = RaceSortColumn.AveragePlacement;
+                    _raceSortDescending = false;
+                    _expandedRaceCode = null;
+                }
                 RefreshSectionButtons();
                 RebuildContent();
             };
@@ -398,6 +421,14 @@ namespace HDTplugins.Views
                 _historyToolbar.Visibility = Visibility.Collapsed;
                 _sectionTitle.Text = GetSectionTitle();
                 _contentHost.Child = BuildSettingsView();
+                return;
+            }
+
+            if (_currentSection == SidebarSection.Races)
+            {
+                _historyToolbar.Visibility = Visibility.Collapsed;
+                _sectionTitle.Text = GetSectionTitle();
+                _contentHost.Child = BuildRaceStatsView();
                 return;
             }
 
@@ -483,6 +514,34 @@ namespace HDTplugins.Views
                 : enUsItem;
             stack.Children.Add(languageComboBox);
 
+            stack.Children.Add(new TextBlock
+            {
+                Text = Loc.S("Settings_ScoreLineLabel"),
+                Foreground = Brushes.White,
+                FontSize = 14,
+                FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(0, 4, 0, 8)
+            });
+
+            var scoreLineComboBox = new ComboBox
+            {
+                Margin = new Thickness(0, 0, 0, 12),
+                MinWidth = 220
+            };
+            var normalizedScoreLine = _settingsService.Settings.GetNormalizedScoreLine();
+            var scoreLineTop4 = new ComboBoxItem { Content = Loc.S("Settings_ScoreLineTop4"), Tag = 4.5 };
+            var scoreLineTop3 = new ComboBoxItem { Content = Loc.S("Settings_ScoreLineTop3"), Tag = 3.5 };
+            var scoreLineTop2 = new ComboBoxItem { Content = Loc.S("Settings_ScoreLineTop2"), Tag = 2.5 };
+            scoreLineComboBox.Items.Add(scoreLineTop4);
+            scoreLineComboBox.Items.Add(scoreLineTop3);
+            scoreLineComboBox.Items.Add(scoreLineTop2);
+            scoreLineComboBox.SelectedItem = Math.Abs(normalizedScoreLine - 2.5) < 0.01
+                ? (object)scoreLineTop2
+                : Math.Abs(normalizedScoreLine - 3.5) < 0.01
+                    ? scoreLineTop3
+                    : scoreLineTop4;
+            stack.Children.Add(scoreLineComboBox);
+
             var autoOpenCheckBox = new CheckBox
             {
                 Content = Loc.S("Settings_AutoOpenOnStartup"),
@@ -518,14 +577,325 @@ namespace HDTplugins.Views
             saveButton.Click += delegate
             {
                 var selectedLanguage = (languageComboBox.SelectedItem as ComboBoxItem)?.Tag as string;
+                var selectedScoreLine = (scoreLineComboBox.SelectedItem as ComboBoxItem)?.Tag;
                 _settingsService.Settings.AutoOpenOnStartup = autoOpenCheckBox.IsChecked != false;
                 _settingsService.Settings.Language = LocalizationService.NormalizeCulture(selectedLanguage).Name;
+                _settingsService.Settings.ScoreLine = selectedScoreLine is double scoreLine ? scoreLine : 4.5;
                 _settingsService.Save();
                 LocalizationService.SetLanguage(_settingsService.Settings.Language);
             };
             stack.Children.Add(saveButton);
 
             return panel;
+        }
+
+        private UIElement BuildRaceStatsView()
+        {
+            _settingsService.Reload();
+            var rows = SortRaceRows(_store.LoadRaceStats(_settingsService.Settings.GetNormalizedScoreLine()));
+
+            var scrollViewer = new ScrollViewer
+            {
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+            };
+
+            var root = new StackPanel();
+            scrollViewer.Content = root;
+
+            root.Children.Add(BuildRaceHeaderRow());
+
+            if (rows.Count == 0)
+            {
+                root.Children.Add(new TextBlock
+                {
+                    Text = Loc.S("Common_NoData"),
+                    Foreground = new SolidColorBrush(Color.FromRgb(126, 118, 108)),
+                    FontSize = 15,
+                    Margin = new Thickness(0, 20, 0, 0)
+                });
+                return scrollViewer;
+            }
+
+            foreach (var row in rows)
+                root.Children.Add(BuildRaceRow(row));
+
+            return scrollViewer;
+        }
+
+        private IReadOnlyList<RaceStatsRow> SortRaceRows(IReadOnlyList<RaceStatsRow> rows)
+        {
+            var ordered = rows ?? Array.Empty<RaceStatsRow>();
+            IOrderedEnumerable<RaceStatsRow> query;
+
+            switch (_raceSortColumn)
+            {
+                case RaceSortColumn.Race:
+                    query = _raceSortDescending
+                        ? ordered.OrderBy(x => x.HasData ? 0 : 1).ThenByDescending(x => x.RaceName, StringComparer.CurrentCultureIgnoreCase)
+                        : ordered.OrderBy(x => x.HasData ? 0 : 1).ThenBy(x => x.RaceName, StringComparer.CurrentCultureIgnoreCase);
+                    break;
+                case RaceSortColumn.FirstRate:
+                    query = _raceSortDescending
+                        ? ordered.OrderBy(x => x.HasData ? 0 : 1).ThenByDescending(x => x.FirstRate)
+                        : ordered.OrderBy(x => x.HasData ? 0 : 1).ThenBy(x => x.FirstRate);
+                    query = query.ThenBy(x => x.RaceName, StringComparer.CurrentCultureIgnoreCase);
+                    break;
+                case RaceSortColumn.ScoreRate:
+                    query = _raceSortDescending
+                        ? ordered.OrderBy(x => x.HasData ? 0 : 1).ThenByDescending(x => x.ScoreRate)
+                        : ordered.OrderBy(x => x.HasData ? 0 : 1).ThenBy(x => x.ScoreRate);
+                    query = query.ThenBy(x => x.RaceName, StringComparer.CurrentCultureIgnoreCase);
+                    break;
+                default:
+                    query = _raceSortDescending
+                        ? ordered.OrderBy(x => x.HasData ? 0 : 1).ThenByDescending(x => x.AveragePlacement ?? double.MinValue)
+                        : ordered.OrderBy(x => x.HasData ? 0 : 1).ThenBy(x => x.AveragePlacement ?? double.MaxValue);
+                    query = query.ThenBy(x => x.RaceName, StringComparer.CurrentCultureIgnoreCase);
+                    break;
+            }
+
+            return query.ToList();
+        }
+
+        private UIElement BuildRaceHeaderRow()
+        {
+            var border = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
+                Padding = new Thickness(14, 10, 14, 10),
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.2, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.2, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star) });
+            border.Child = grid;
+
+            grid.Children.Add(CreateRaceHeaderButton("RaceStats_HeaderRace", RaceSortColumn.Race, 0));
+            grid.Children.Add(CreateRaceHeaderButton("RaceStats_HeaderAvgPlacement", RaceSortColumn.AveragePlacement, 1));
+            grid.Children.Add(CreateRaceHeaderButton("RaceStats_HeaderFirstRate", RaceSortColumn.FirstRate, 2));
+            grid.Children.Add(CreateRaceHeaderButton("RaceStats_HeaderScoreRate", RaceSortColumn.ScoreRate, 3));
+
+            return border;
+        }
+
+        private UIElement CreateRaceHeaderButton(string resourceKey, RaceSortColumn column, int columnIndex)
+        {
+            var button = new Button
+            {
+                Content = Loc.S(resourceKey),
+                Background = Brushes.Transparent,
+                BorderBrush = Brushes.Transparent,
+                Foreground = Brushes.White,
+                FontSize = 14,
+                FontWeight = FontWeights.SemiBold,
+                HorizontalContentAlignment = columnIndex == 0 ? HorizontalAlignment.Left : HorizontalAlignment.Center,
+                Cursor = Cursors.Hand
+            };
+            button.Click += delegate
+            {
+                if (_raceSortColumn == column)
+                    _raceSortDescending = !_raceSortDescending;
+                else
+                {
+                    _raceSortColumn = column;
+                    _raceSortDescending = column != RaceSortColumn.AveragePlacement;
+                }
+
+                _contentHost.Child = BuildRaceStatsView();
+            };
+            Grid.SetColumn(button, columnIndex);
+            return button;
+        }
+
+        private UIElement BuildRaceRow(RaceStatsRow row)
+        {
+            var container = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
+
+            var summaryBorder = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(241, 238, 233)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(210, 205, 197)),
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(14, 12, 14, 12),
+                Cursor = Cursors.Hand
+            };
+
+            var summaryGrid = new Grid();
+            summaryGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.2, GridUnitType.Star) });
+            summaryGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.2, GridUnitType.Star) });
+            summaryGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star) });
+            summaryGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star) });
+            summaryBorder.Child = summaryGrid;
+
+            summaryGrid.Children.Add(CreateRaceSummaryText(row.RaceName, 0, HorizontalAlignment.Left, FontWeights.SemiBold));
+            summaryGrid.Children.Add(CreateRaceSummaryText(
+                row.HasData ? row.AveragePlacement.Value.ToString("F2", CultureInfo.CurrentCulture) : Loc.S("RaceStats_NoData"),
+                1,
+                HorizontalAlignment.Center,
+                FontWeights.Normal,
+                row.HasData ? GetPlacementBrush(row.AveragePlacement.Value) : NeutralValueBrush));
+            summaryGrid.Children.Add(CreateRaceSummaryText(FormatRate(row.FirstRate, row.HasData), 2, HorizontalAlignment.Center, FontWeights.Normal));
+            summaryGrid.Children.Add(CreateRaceSummaryText(FormatRate(row.ScoreRate, row.HasData), 3, HorizontalAlignment.Center, FontWeights.Normal));
+
+            summaryBorder.MouseLeftButtonUp += delegate
+            {
+                _expandedRaceCode = string.Equals(_expandedRaceCode, row.RaceCode, StringComparison.OrdinalIgnoreCase) ? null : row.RaceCode;
+                _contentHost.Child = BuildRaceStatsView();
+            };
+
+            container.Children.Add(summaryBorder);
+
+            if (string.Equals(_expandedRaceCode, row.RaceCode, StringComparison.OrdinalIgnoreCase))
+                container.Children.Add(BuildRaceDetail(row));
+
+            return container;
+        }
+
+        private UIElement CreateRaceSummaryText(string text, int columnIndex, HorizontalAlignment alignment, FontWeight fontWeight, Brush foreground = null)
+        {
+            var block = new TextBlock
+            {
+                Text = text,
+                Foreground = foreground ?? DarkForegroundBrush,
+                FontSize = 14,
+                FontWeight = fontWeight,
+                HorizontalAlignment = alignment,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            Grid.SetColumn(block, columnIndex);
+            return block;
+        }
+
+        private UIElement BuildRaceDetail(RaceStatsRow row)
+        {
+            var border = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
+                Padding = new Thickness(16),
+                Margin = new Thickness(0, 2, 0, 0)
+            };
+
+            var root = new StackPanel();
+            border.Child = root;
+
+            root.Children.Add(new TextBlock
+            {
+                Text = Loc.F("RaceStats_DetailMatches", row.MatchCount),
+                Foreground = LightForegroundBrush,
+                FontSize = 13,
+                Margin = new Thickness(0, 0, 0, 12)
+            });
+
+            var detailGrid = new Grid();
+            detailGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            detailGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            root.Children.Add(detailGrid);
+
+            var leftColumn = new StackPanel { Margin = new Thickness(0, 0, 18, 0) };
+            leftColumn.Children.Add(BuildRaceDetailSection(Loc.S("RaceStats_BestSynergy"), BuildRaceSynergyList(row.BestSynergies)));
+            leftColumn.Children.Add(BuildRaceDetailSection(Loc.S("RaceStats_WorstSynergy"), BuildRaceSynergyList(row.WorstSynergies), false));
+            Grid.SetColumn(leftColumn, 0);
+            detailGrid.Children.Add(leftColumn);
+
+            var rightColumn = new StackPanel();
+            rightColumn.Children.Add(BuildRaceDetailSection(Loc.S("RaceStats_TopCards"), BuildRaceCardUsageList(row.TopCards)));
+            rightColumn.Children.Add(BuildRaceDetailSection(Loc.S("RaceStats_TopLineups"), BuildRaceTextValue(FormatTagList(row.TopLineups)), false));
+            Grid.SetColumn(rightColumn, 1);
+            detailGrid.Children.Add(rightColumn);
+
+            return border;
+        }
+
+        private UIElement BuildRaceDetailSection(string title, UIElement content, bool includeBottomMargin = true)
+        {
+            var stack = new StackPanel { Margin = includeBottomMargin ? new Thickness(0, 0, 0, 10) : new Thickness(0) };
+            stack.Children.Add(new TextBlock
+            {
+                Text = title,
+                Foreground = LightForegroundBrush,
+                FontSize = 14,
+                FontWeight = FontWeights.SemiBold
+            });
+            if (content is FrameworkElement element)
+                element.Margin = new Thickness(0, 4, 0, 0);
+            stack.Children.Add(content);
+            return stack;
+        }
+
+        private string FormatRate(double value, bool hasData)
+        {
+            return hasData ? value.ToString("P1", CultureInfo.CurrentCulture) : Loc.S("RaceStats_NoData");
+        }
+
+        private UIElement BuildRaceSynergyList(IReadOnlyList<RaceSynergyStat> synergies)
+        {
+            if (synergies == null || synergies.Count == 0)
+                return BuildRaceTextValue(Loc.S("RaceStats_NoSynergyData"));
+
+            var stack = new StackPanel();
+            foreach (var synergy in synergies)
+            {
+                var block = new TextBlock
+                {
+                    FontSize = 13,
+                    TextWrapping = TextWrapping.Wrap
+                };
+                block.Inlines.Add(CreateRun(synergy.RaceName, LightForegroundBrush));
+                block.Inlines.Add(CreateRun(" (", LightForegroundBrush));
+                block.Inlines.Add(CreateRun(Loc.S("Common_AvgPlacementLabel"), LightForegroundBrush));
+                block.Inlines.Add(CreateRun(" ", LightForegroundBrush));
+                block.Inlines.Add(CreateRun(synergy.AveragePlacement.ToString("F2", CultureInfo.CurrentCulture), GetPlacementBrush(synergy.AveragePlacement)));
+                block.Inlines.Add(CreateRun(", ", LightForegroundBrush));
+                block.Inlines.Add(CreateRun(Loc.S("Common_PlacementDeltaLabel"), LightForegroundBrush));
+                block.Inlines.Add(CreateRun(" ", LightForegroundBrush));
+                block.Inlines.Add(CreateRun(synergy.PlacementDelta.ToString("+0.00;-0.00;0.00", CultureInfo.CurrentCulture), GetDeltaBrush(-synergy.PlacementDelta)));
+                block.Inlines.Add(CreateRun(")", LightForegroundBrush));
+                stack.Children.Add(block);
+            }
+
+            return stack;
+        }
+
+        private UIElement BuildRaceCardUsageList(IReadOnlyList<RaceCardUsage> cards)
+        {
+            if (cards == null || cards.Count == 0)
+                return BuildRaceTextValue(Loc.S("Common_NoData"));
+
+            var grid = new UniformGrid { Columns = 2 };
+            foreach (var card in cards.Take(3))
+            {
+                grid.Children.Add(new TextBlock
+                {
+                    Text = card.CardName + " - " + card.Rate.ToString("P0", CultureInfo.CurrentCulture),
+                    Foreground = LightForegroundBrush,
+                    FontSize = 13,
+                    TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(0, 0, 12, 6)
+                });
+            }
+
+            return grid;
+        }
+
+        private string FormatTagList(IReadOnlyList<RaceTagUsage> tags)
+        {
+            if (tags == null || tags.Count == 0)
+                return Loc.S("Common_NoData");
+
+            return string.Join(" / ", tags.Take(3).Select(x => Loc.F("RaceStats_TagItemFormat", x.Tag, x.Rate.ToString("P0", CultureInfo.CurrentCulture))));
+        }
+
+        private string BuildScoreLineText(double scoreLine)
+        {
+            if (Math.Abs(scoreLine - 2.5) < 0.01)
+                return Loc.S("Settings_ScoreLineTop2");
+            if (Math.Abs(scoreLine - 3.5) < 0.01)
+                return Loc.S("Settings_ScoreLineTop3");
+            return Loc.S("Settings_ScoreLineTop4");
         }
 
         private UIElement BuildPlaceholder()
@@ -601,7 +971,7 @@ namespace HDTplugins.Views
                 Text = row.HeroName,
                 FontSize = 18,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = Brushes.White,
+                Foreground = LightForegroundBrush,
                 VerticalAlignment = VerticalAlignment.Center
             });
             var tagsPanel = BuildTagWrapPanel(row.Tags, false);
@@ -609,24 +979,18 @@ namespace HDTplugins.Views
             topGrid.Children.Add(tagsPanel);
             stack.Children.Add(topGrid);
 
+            stack.Children.Add(BuildHistoryStatsText(row));
             stack.Children.Add(new TextBlock
             {
                 Margin = new Thickness(0, 6, 0, 0),
-                Foreground = Brushes.White,
-                FontSize = 13,
-                Text = Loc.F("HistoryMatches_TimeRatingFormat", row.TimestampText, row.Placement, row.RatingAfter, FormatRatingDelta(row.RatingDelta))
-            });
-            stack.Children.Add(new TextBlock
-            {
-                Margin = new Thickness(0, 6, 0, 0),
-                Foreground = Brushes.White,
+                Foreground = LightForegroundBrush,
                 FontSize = 13,
                 Text = Loc.F("HistoryMatches_AnomalyFormat", row.AnomalyDisplay)
             });
             stack.Children.Add(new TextBlock
             {
                 Margin = new Thickness(0, 6, 0, 0),
-                Foreground = Brushes.White,
+                Foreground = LightForegroundBrush,
                 FontSize = 13,
                 Text = Loc.F("HistoryMatches_FinalBoardFormat", row.FinalBoardDisplay),
                 TextWrapping = TextWrapping.Wrap
@@ -646,7 +1010,7 @@ namespace HDTplugins.Views
 
             var averagePlacement = rows.Average(x => x.Placement);
             var totalDelta = rows.Sum(x => x.RatingDelta);
-            _summaryText.Content = Loc.F("HistoryMatches_SummaryFormat", rows.Count, averagePlacement, FormatRatingDelta(totalDelta));
+            _summaryText.Content = BuildHistorySummaryText(rows.Count, averagePlacement, totalDelta);
         }
 
         private List<BgMatchRow> FilterRows(IReadOnlyList<BgMatchRow> rows)
@@ -860,7 +1224,7 @@ namespace HDTplugins.Views
             var infoPanel = new StackPanel { HorizontalAlignment = HorizontalAlignment.Right };
             Grid.SetColumn(infoPanel, 2);
             infoPanel.Children.Add(CreateHeaderBadge(Loc.F("MatchDetail_TimeFormat", FormatTimestamp(snapshot.Timestamp))));
-            infoPanel.Children.Add(CreateHeaderBadge(Loc.F("MatchDetail_HeaderStatsFormat", snapshot.Placement, snapshot.RatingAfter, FormatRatingDelta(snapshot.RatingDelta)), new Thickness(0, 10, 0, 0)));
+            infoPanel.Children.Add(CreateHeaderBadge(BuildMatchDetailStatsText(snapshot), new Thickness(0, 10, 0, 0)));
             grid.Children.Add(infoPanel);
             return grid;
         }
@@ -875,10 +1239,21 @@ namespace HDTplugins.Views
                 Child = new TextBlock
                 {
                     Text = text,
-                    Foreground = Brushes.White,
+                    Foreground = LightForegroundBrush,
                     FontSize = 15,
                     FontWeight = FontWeights.SemiBold
                 }
+            };
+        }
+
+        private Border CreateHeaderBadge(UIElement content, Thickness? margin = null)
+        {
+            return new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
+                Padding = new Thickness(14, 10, 14, 10),
+                Margin = margin ?? new Thickness(0),
+                Child = content
             };
         }
 
@@ -1106,6 +1481,8 @@ namespace HDTplugins.Views
                     Background = Brushes.Transparent,
                     BorderBrush = Brushes.Transparent,
                     Foreground = Brushes.White,
+                    FontSize = 14,
+                    FontWeight = FontWeights.Bold,
                     Visibility = Visibility.Collapsed,
                     Cursor = Cursors.Hand,
                     VerticalAlignment = VerticalAlignment.Top
@@ -1321,6 +1698,100 @@ namespace HDTplugins.Views
             return GameTextService.GetRaceNameFromCardId(minion.CardId, minion.Race);
         }
 
+        private TextBlock BuildHistoryStatsText(BgMatchRow row)
+        {
+            var block = new TextBlock
+            {
+                Margin = new Thickness(0, 6, 0, 0),
+                FontSize = 13,
+                TextWrapping = TextWrapping.Wrap
+            };
+            AppendLabelValue(block.Inlines, Loc.S("Common_TimeLabel"), row.TimestampText, LightForegroundBrush);
+            AppendSpacer(block.Inlines);
+            AppendLabelValue(block.Inlines, Loc.S("Common_PlacementLabel"), row.Placement.ToString(CultureInfo.CurrentCulture), GetPlacementBrush(row.Placement));
+            AppendSpacer(block.Inlines);
+            AppendLabelValue(block.Inlines, Loc.S("Common_RatingLabel"), row.RatingAfter.ToString(CultureInfo.CurrentCulture), LightForegroundBrush);
+            AppendSpacer(block.Inlines);
+            AppendLabelValue(block.Inlines, Loc.S("Common_RatingDeltaLabel"), FormatRatingDelta(row.RatingDelta), GetDeltaBrush(row.RatingDelta));
+            return block;
+        }
+
+        private TextBlock BuildHistorySummaryText(int matchCount, double averagePlacement, int totalDelta)
+        {
+            var block = new TextBlock
+            {
+                FontSize = 14,
+                TextAlignment = TextAlignment.Right
+            };
+            AppendLabelValue(block.Inlines, Loc.S("Common_MatchesLabel"), matchCount.ToString(CultureInfo.CurrentCulture), LightForegroundBrush);
+            AppendSpacer(block.Inlines, "  ");
+            AppendLabelValue(block.Inlines, Loc.S("Common_AvgPlacementLabel"), averagePlacement.ToString("F2", CultureInfo.CurrentCulture), GetPlacementBrush(averagePlacement));
+            AppendSpacer(block.Inlines, "  ");
+            AppendLabelValue(block.Inlines, Loc.S("Common_RatingDeltaLabel"), FormatRatingDelta(totalDelta), GetDeltaBrush(totalDelta));
+            return block;
+        }
+
+        private TextBlock BuildMatchDetailStatsText(BgSnapshot snapshot)
+        {
+            var block = new TextBlock
+            {
+                FontSize = 15,
+                FontWeight = FontWeights.SemiBold
+            };
+            AppendLabelValue(block.Inlines, Loc.S("Common_PlacementLabel"), snapshot.Placement.ToString(CultureInfo.CurrentCulture), GetPlacementBrush(snapshot.Placement));
+            AppendSpacer(block.Inlines, "   ");
+            AppendLabelValue(block.Inlines, Loc.S("Common_RatingLabel"), snapshot.RatingAfter.ToString(CultureInfo.CurrentCulture), LightForegroundBrush);
+            AppendSpacer(block.Inlines, "   ");
+            AppendLabelValue(block.Inlines, Loc.S("Common_RatingDeltaLabel"), FormatRatingDelta(snapshot.RatingDelta), GetDeltaBrush(snapshot.RatingDelta));
+            return block;
+        }
+
+        private static void AppendLabelValue(ICollection<Inline> inlines, string label, string value, Brush valueBrush)
+        {
+            inlines.Add(CreateRun(label + ": ", LightForegroundBrush));
+            inlines.Add(CreateRun(value, valueBrush));
+        }
+
+        private static void AppendSpacer(ICollection<Inline> inlines, string spacing = "    ")
+        {
+            inlines.Add(CreateRun(spacing, LightForegroundBrush));
+        }
+
+        private static Run CreateRun(string text, Brush brush)
+        {
+            return new Run(text) { Foreground = brush };
+        }
+
+        private TextBlock BuildRaceTextValue(string text)
+        {
+            return new TextBlock
+            {
+                Text = text,
+                Foreground = LightForegroundBrush,
+                FontSize = 13,
+                TextWrapping = TextWrapping.Wrap
+            };
+        }
+
+        private Brush GetPlacementBrush(double placement)
+        {
+            return placement < _settingsService.Settings.GetNormalizedScoreLine() ? PositiveValueBrush : NegativeValueBrush;
+        }
+
+        private static Brush GetDeltaBrush(double delta)
+        {
+            if (delta > 0.001)
+                return PositiveValueBrush;
+            if (delta < -0.001)
+                return NegativeValueBrush;
+            return NeutralValueBrush;
+        }
+
+        private static SolidColorBrush CreateBrush(byte r, byte g, byte b)
+        {
+            return new SolidColorBrush(Color.FromRgb(r, g, b));
+        }
+
         private static string FormatRatingDelta(int ratingDelta)
         {
             return ratingDelta > 0
@@ -1340,3 +1811,4 @@ namespace HDTplugins.Views
         }
     }
 }
+

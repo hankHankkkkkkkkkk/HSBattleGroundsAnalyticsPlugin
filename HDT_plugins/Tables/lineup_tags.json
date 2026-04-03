@@ -32,7 +32,7 @@
     "下毒",
     "金铜须",
     "金瑞文",
-    "",
+    "野猪人",
     "",
     "",
     "",
@@ -99,7 +99,7 @@
       "priority": 100,
       "conditions": {
         "type": "minionRaceCountAtLeast",
-        "race": "",
+        "race": "BEAST",
         "value": 4
       }
     },
@@ -118,6 +118,15 @@
       "conditions": {
         "type": "minionRaceCountAtLeast",
         "race": "NAGA",
+        "value": 4
+      }
+    },
+    {
+      "tag": "野猪人",
+      "priority": 100,
+      "conditions": {
+        "type": "minionRaceCountAtLeast",
+        "race": "QUILBOAR",
         "value": 4
       }
     }

@@ -18,9 +18,11 @@ namespace HDTplugins.Services
 
         public void Initialize(string tablesDir)
         {
-            _settingsPath = Path.Combine(tablesDir, "plugin_settings.json");
+            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            _settingsPath = Path.Combine(local, "HDT_BGStats", "Config", "plugin_settings.json");
             EnsureSettingsFile();
             Reload();
+            HdtLog.Info("[BGStats] 插件设置路径: " + _settingsPath);
         }
 
         public void Reload()

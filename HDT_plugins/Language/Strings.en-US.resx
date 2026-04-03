@@ -159,6 +159,27 @@
   <data name="Common_WeekRangeFormat" xml:space="preserve">
     <value>{0:yyyy-MM-dd} ~ {1:yyyy-MM-dd}</value>
   </data>
+  <data name="Common_TimeLabel" xml:space="preserve">
+    <value>Time</value>
+  </data>
+  <data name="Common_PlacementLabel" xml:space="preserve">
+    <value>Placement</value>
+  </data>
+  <data name="Common_RatingLabel" xml:space="preserve">
+    <value>Rating</value>
+  </data>
+  <data name="Common_RatingDeltaLabel" xml:space="preserve">
+    <value>Rating Delta</value>
+  </data>
+  <data name="Common_MatchesLabel" xml:space="preserve">
+    <value>Matches</value>
+  </data>
+  <data name="Common_AvgPlacementLabel" xml:space="preserve">
+    <value>Avg Placement</value>
+  </data>
+  <data name="Common_PlacementDeltaLabel" xml:space="preserve">
+    <value>Delta</value>
+  </data>
   <data name="Settings_Title" xml:space="preserve">
     <value>Battlegrounds Analytics - Settings</value>
   </data>
@@ -350,5 +371,62 @@
   </data>
   <data name="GameRace_BLANK" xml:space="preserve">
     <value />
+  </data>
+  <data name="RaceStats_WorstSynergy" xml:space="preserve">
+    <value>Worst synergies</value>
+  </data>
+  <data name="RaceStats_SynergyItemFormat" xml:space="preserve">
+    <value>{0} (avg {1}, delta {2})</value>
+  </data>
+  <data name="RaceStats_HeaderRace" xml:space="preserve">
+    <value>Race</value>
+  </data>
+  <data name="RaceStats_TagItemFormat" xml:space="preserve">
+    <value>{0} ({1})</value>
+  </data>
+  <data name="RaceStats_CardItemFormat" xml:space="preserve">
+    <value>{0} x{1}</value>
+  </data>
+  <data name="RaceStats_HeaderFirstRate" xml:space="preserve">
+    <value>First Rate</value>
+  </data>
+  <data name="Settings_ScoreLineLabel" xml:space="preserve">
+    <value>Score line</value>
+  </data>
+  <data name="Settings_ScoreLineTop3" xml:space="preserve">
+    <value>3.5 (Top 3 gains)</value>
+  </data>
+  <data name="Settings_ScoreLineTop4" xml:space="preserve">
+    <value>4.5 (Top 4 gains)</value>
+  </data>
+  <data name="RaceStats_TopLineups" xml:space="preserve">
+    <value>Top lineups</value>
+  </data>
+  <data name="RaceStats_HeaderScoreRate" xml:space="preserve">
+    <value>Score Rate</value>
+  </data>
+  <data name="RaceStats_DetailMatches" xml:space="preserve">
+    <value>Matches: {0}</value>
+  </data>
+  <data name="Settings_ScoreLineTop2" xml:space="preserve">
+    <value>2.5 (Top 2 gains)</value>
+  </data>
+  <data name="RaceStats_TopCards" xml:space="preserve">
+    <value>Top cards</value>
+  </data>
+  <data name="RaceStats_BestSynergy" xml:space="preserve">
+    <value>Best synergies</value>
+  </data>
+  <data name="RaceStats_NoData" xml:space="preserve">
+    <value>No data</value>
+  </data>
+  <data name="RaceStats_ScoreLineHint" xml:space="preserve">
+    <value>Score rate uses: {0}</value>
+  </data>
+  <data name="RaceStats_NoSynergyData" xml:space="preserve">
+    <value>No synergy data</value>
+  </data>
+  <data name="RaceStats_HeaderAvgPlacement" xml:space="preserve">
+    <value>Avg Placement</value>
   </data>
 </root>

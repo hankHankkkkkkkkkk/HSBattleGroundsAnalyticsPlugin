@@ -44,3 +44,4 @@ namespace HDTplugins.Models
         public string TagsDisplay => Tags == null || Tags.Count == 0 ? string.Empty : string.Join(" / ", Tags.Take(5));
     }
 }
+

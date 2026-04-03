@@ -30,3 +30,4 @@ namespace HDTplugins.Models
         public List<string> ManualTags { get; set; } = new List<string>();
     }
 }
+

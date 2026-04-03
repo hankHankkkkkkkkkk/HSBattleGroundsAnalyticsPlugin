@@ -17,7 +17,7 @@ namespace HDTplugins
         public string Name => Loc.S("Plugin_Name");
         public string Description => Loc.S("Plugin_Description");
         public string Author => "Hank";
-        public Version Version => new Version(0, 8, 6);
+        public Version Version => new Version(0, 9, 3);
         public string ButtonText => Loc.S("Plugin_ButtonText");
         public MenuItem MenuItem => _menuItem;
 
@@ -32,16 +32,19 @@ namespace HDTplugins
 
         public void OnLoad()
         {
-            if (_enabled) return;
-            _enabled = true;
+            if (_enabled)
+                return;
 
+            _enabled = true;
             _store = new StatsStore();
             _store.Initialize();
+
             _settingsService = new PluginSettingsService();
             _settingsService.Initialize(_store.TablesDirectoryPath);
             LocalizationService.Initialize(_settingsService.Settings.Language);
             GameTextService.Initialize();
             ScheduleStartupGameTextRefresh();
+
             _probe = new BgGameProbe();
             _menuItem = CreateQuickOpenMenuItem();
             LocalizationService.LanguageChanged += OnLanguageChanged;
@@ -51,6 +54,7 @@ namespace HDTplugins
 
             if (_settingsService.Settings.AutoOpenOnStartup)
                 ShowWindowAsync();
+
             HdtLog.Info("[Hank的log信息] 插件已加载（已订阅事件，GUI 自动启动）");
         }
 
@@ -71,7 +75,8 @@ namespace HDTplugins
 
         public void OnUpdate()
         {
-            if (!_enabled) return;
+            if (!_enabled)
+                return;
 
             _probe.Tick();
             if (!_probe.IsBattlegrounds || _finalizedThisMatch)
@@ -98,6 +103,7 @@ namespace HDTplugins
                     _probe.AnomalyCardId,
                     _probe.FinalBoard,
                     _probe.TavernUpgradeTimeline);
+
                 var latestArchive = _store.RefreshLatestRecordedArchiveForDisplay();
                 _statsWindow?.SyncVersionSelection(latestArchive?.Key);
                 _statsWindow?.Reload();
@@ -108,7 +114,8 @@ namespace HDTplugins
 
         private void OnGameStart()
         {
-            if (!_enabled) return;
+            if (!_enabled)
+                return;
 
             _finalizedThisMatch = false;
             _store.ResetMatch();
@@ -119,7 +126,9 @@ namespace HDTplugins
 
         private void OnGameEnd()
         {
-            if (!_enabled) return;
+            if (!_enabled)
+                return;
+
             _probe.OnGameEnd();
         }
 
@@ -143,7 +152,6 @@ namespace HDTplugins
             }
 
             TryAttachOwner();
-
             _statsWindow.SyncVersionSelection(_store.CurrentArchive?.Key);
             _statsWindow.Show();
             _statsWindow.Activate();
@@ -205,9 +213,7 @@ namespace HDTplugins
         {
             try
             {
-                if (_statsWindow == null)
-                    return;
-                if (_statsWindow.IsVisible)
+                if (_statsWindow == null || _statsWindow.IsVisible)
                     return;
 
                 var owner = Application.Current?.MainWindow;
@@ -231,7 +237,9 @@ namespace HDTplugins
                 _statsWindow?.Close();
                 _statsWindow = null;
             }
-            catch { }
+            catch
+            {
+            }
         }
     }
 }

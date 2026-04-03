@@ -115,7 +115,7 @@ namespace HDTplugins.Services
                 if (TryDetectBattlegrounds())
                 {
                     _bgDetected = true;
-                    HdtLog.Info("[BGStats] 已识别为酒馆战棋对局，开始解析数据");
+                    HdtLog.Info("[BGStats] å·²è¯†åˆ«ä¸ºé…’é¦†æˆ˜æ£‹å¯¹å±€ï¼Œå¼€å§‹è§£æžæ•°æ®");
                 }
                 else
                 {
@@ -188,7 +188,7 @@ namespace HDTplugins.Services
             }
             catch (Exception ex)
             {
-                HdtLog.Error("[BGStats] TryResolveOfferedHeroes 失败: " + ex.Message);
+                HdtLog.Error("[BGStats] TryResolveOfferedHeroes å¤±è´¥: " + ex.Message);
             }
         }
 
@@ -224,14 +224,14 @@ namespace HDTplugins.Services
                 if (!string.IsNullOrEmpty(HeroCardId))
                 {
                     _needResolveHero = false;
-                    HdtLog.Info($"[BGStats] 已解析英雄：Hero={HeroCardId}, HeroPower={HeroPowerCardId ?? "null"}");
+                    HdtLog.Info($"[BGStats] å·²è§£æžè‹±é›„ï¼šHero={HeroCardId}, HeroPower={HeroPowerCardId ?? "null"}");
                     if (RatingBefore <= 0)
                         RatingBefore = TryGetCurrentBattlegroundsRating() ?? -1;
                 }
             }
             catch (Exception ex)
             {
-                HdtLog.Error("[BGStats] TryResolveHeroAndHeroPower 失败: " + ex.Message);
+                HdtLog.Error("[BGStats] TryResolveHeroAndHeroPower å¤±è´¥: " + ex.Message);
             }
         }
 
@@ -243,7 +243,7 @@ namespace HDTplugins.Services
                 var hpCardId = ResolveHeroPowerCardId(out var source);
                 if (string.IsNullOrEmpty(hpCardId))
                 {
-                    HdtLog.Info("[BGStats][HeroPower] 本次未读取到英雄技能");
+                    HdtLog.Info("[BGStats][HeroPower] æœ¬æ¬¡æœªè¯»å–åˆ°è‹±é›„æŠ€èƒ½");
                     return;
                 }
 
@@ -251,15 +251,15 @@ namespace HDTplugins.Services
                 if (string.IsNullOrEmpty(InitialHeroPowerCardId))
                 {
                     InitialHeroPowerCardId = hpCardId;
-                    HdtLog.Info($"[BGStats][HeroPower] 记录初始英雄技能: {InitialHeroPowerCardId} (source={source})");
+                    HdtLog.Info($"[BGStats][HeroPower] è®°å½•åˆå§‹è‹±é›„æŠ€èƒ½: {InitialHeroPowerCardId} (source={source})");
                 }
 
                 if (!string.Equals(previousHeroPower, HeroPowerCardId, StringComparison.OrdinalIgnoreCase))
-                    HdtLog.Info($"[BGStats][HeroPower] 英雄技能更新: {previousHeroPower ?? "null"} -> {HeroPowerCardId} (source={source})");
+                    HdtLog.Info($"[BGStats][HeroPower] è‹±é›„æŠ€èƒ½æ›´æ–°: {previousHeroPower ?? "null"} -> {HeroPowerCardId} (source={source})");
             }
             catch (Exception ex)
             {
-                HdtLog.Error("[BGStats] TryRefreshHeroPower 失败: " + ex.Message);
+                HdtLog.Error("[BGStats] TryRefreshHeroPower å¤±è´¥: " + ex.Message);
             }
         }
 
@@ -380,12 +380,12 @@ namespace HDTplugins.Services
                 if (Placement >= 1 && Placement <= maxPlace)
                 {
                     _needResolvePlacement = false;
-                    HdtLog.Info($"[BGStats] 已解析名次 placement={Placement}");
+                    HdtLog.Info($"[BGStats] å·²è§£æžåæ¬¡ placement={Placement}");
                 }
             }
             catch (Exception ex)
             {
-                HdtLog.Error("[BGStats] TryResolvePlacement 失败: " + ex.Message);
+                HdtLog.Error("[BGStats] TryResolvePlacement å¤±è´¥: " + ex.Message);
             }
         }
 
@@ -417,7 +417,7 @@ namespace HDTplugins.Services
             }
             catch (Exception ex)
             {
-                HdtLog.Error("[BGStats] TryCachePlacement 失败: " + ex.Message);
+                HdtLog.Error("[BGStats] TryCachePlacement å¤±è´¥: " + ex.Message);
             }
         }
 
@@ -437,7 +437,7 @@ namespace HDTplugins.Services
             }
             catch (Exception ex)
             {
-                HdtLog.Error("[BGStats] TryCacheAvailableRaces 失败: " + ex.Message);
+                HdtLog.Error("[BGStats] TryCacheAvailableRaces å¤±è´¥: " + ex.Message);
             }
         }
 
@@ -462,7 +462,7 @@ namespace HDTplugins.Services
             }
             catch (Exception ex)
             {
-                HdtLog.Error("[BGStats] TryCacheAnomaly 失败: " + ex.Message);
+                HdtLog.Error("[BGStats] TryCacheAnomaly å¤±è´¥: " + ex.Message);
             }
         }
 
@@ -479,7 +479,7 @@ namespace HDTplugins.Services
             }
             catch (Exception ex)
             {
-                HdtLog.Error("[BGStats] TryUpdateTurnScopedSnapshots 失败: " + ex.Message);
+                HdtLog.Error("[BGStats] TryUpdateTurnScopedSnapshots å¤±è´¥: " + ex.Message);
             }
         }
 
@@ -505,7 +505,7 @@ namespace HDTplugins.Services
             }
             catch (Exception ex)
             {
-                HdtLog.Error("[BGStats] TryCapturePreCombatSnapshot 失败: " + ex.Message);
+                HdtLog.Error("[BGStats] TryCapturePreCombatSnapshot å¤±è´¥: " + ex.Message);
             }
         }
 
@@ -514,7 +514,7 @@ namespace HDTplugins.Services
             TryRefreshHeroPower();
             TryCacheFinalBoard();
             _combatSnapshotCapturedThisFight = FinalBoard.Count > 0 || !string.IsNullOrWhiteSpace(HeroPowerCardId);
-            HdtLog.Info($"[BGStats] 已在进入战斗前记录当前阵容与英雄技能，step={_lastObservedStep}, boardCount={FinalBoard.Count}, heroPower={HeroPowerCardId ?? "null"}");
+            HdtLog.Info($"[BGStats] å·²åœ¨è¿›å…¥æˆ˜æ–—å‰è®°å½•å½“å‰é˜µå®¹ä¸Žè‹±é›„æŠ€èƒ½ï¼Œstep={_lastObservedStep}, boardCount={FinalBoard.Count}, heroPower={HeroPowerCardId ?? "null"}");
         }
 
         private void TryCacheFinalBoard()
@@ -533,7 +533,7 @@ namespace HDTplugins.Services
             }
             catch (Exception ex)
             {
-                HdtLog.Error("[BGStats] TryCacheFinalBoard 失败: " + ex.Message);
+                HdtLog.Error("[BGStats] TryCacheFinalBoard å¤±è´¥: " + ex.Message);
             }
         }
 
@@ -562,7 +562,7 @@ namespace HDTplugins.Services
             }
             catch (Exception ex)
             {
-                HdtLog.Error("[BGStats] TryCacheTavernUpgrade 失败: " + ex.Message);
+                HdtLog.Error("[BGStats] TryCacheTavernUpgrade å¤±è´¥: " + ex.Message);
             }
         }
 
@@ -643,7 +643,7 @@ namespace HDTplugins.Services
             }
             catch (Exception ex)
             {
-                HdtLog.Error("[BGStats] BuildBoardMinionSnapshot 失败: " + ex.Message);
+                HdtLog.Error("[BGStats] BuildBoardMinionSnapshot å¤±è´¥: " + ex.Message);
                 return null;
             }
         }
@@ -751,7 +751,7 @@ namespace HDTplugins.Services
             var elapsedMs = (long)((nowTs - _ratingResolveStartTs) * 1000.0 / Stopwatch.Frequency);
             if (elapsedMs > RatingResolveTimeoutMs)
             {
-                HdtLog.Warn("[BGStats] 赛后分数获取超时，停止轮询");
+                HdtLog.Warn("[BGStats] èµ›åŽåˆ†æ•°èŽ·å–è¶…æ—¶ï¼Œåœæ­¢è½®è¯¢");
                 _needResolveRatingAfter = false;
                 return;
             }
@@ -761,7 +761,7 @@ namespace HDTplugins.Services
             {
                 RatingAfter = afterA.Value;
                 _needResolveRatingAfter = false;
-                HdtLog.Info($"[BGStats] 通过 BaconRatingChangeData 拿到 ratingAfter={RatingAfter}");
+                HdtLog.Info($"[BGStats] é€šè¿‡ BaconRatingChangeData æ‹¿åˆ° ratingAfter={RatingAfter}");
                 return;
             }
 
@@ -770,7 +770,7 @@ namespace HDTplugins.Services
             {
                 RatingAfter = afterC.Value;
                 _needResolveRatingAfter = false;
-                HdtLog.Info($"[BGStats] 通过 CurrentGameStats 拿到 ratingAfter={RatingAfter}");
+                HdtLog.Info($"[BGStats] é€šè¿‡ CurrentGameStats æ‹¿åˆ° ratingAfter={RatingAfter}");
                 return;
             }
 
@@ -779,7 +779,7 @@ namespace HDTplugins.Services
             {
                 RatingAfter = current.Value;
                 _needResolveRatingAfter = false;
-                HdtLog.Info($"[BGStats] 通过“分数变化检测”拿到 ratingAfter={RatingAfter} (before={RatingBefore})");
+                HdtLog.Info($"[BGStats] é€šè¿‡â€œåˆ†æ•°å˜åŒ–æ£€æµ‹â€æ‹¿åˆ° ratingAfter={RatingAfter} (before={RatingBefore})");
             }
         }
 
@@ -928,8 +928,10 @@ namespace HDTplugins.Services
                     return false;
             return true;
         }
+
     }
 }
+
 
 
 
