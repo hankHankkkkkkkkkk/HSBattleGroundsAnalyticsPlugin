@@ -45,6 +45,7 @@ namespace HDTplugins.Services
         public string InitialHeroPowerCardId { get; private set; }
         public string HeroPowerCardId { get; private set; }
         public int[] OfferedHeroDbfIds { get; private set; } = Array.Empty<int>();
+        public string[] OfferedHeroCardIds { get; private set; } = Array.Empty<string>();
         public int Placement { get; private set; }
         public bool HasResolvedHero => !string.IsNullOrEmpty(HeroCardId);
         public bool HasResolvedPlacement => Placement > 0;
@@ -66,6 +67,7 @@ namespace HDTplugins.Services
             HeroPowerCardId = null;
             Placement = 0;
             OfferedHeroDbfIds = Array.Empty<int>();
+            OfferedHeroCardIds = Array.Empty<string>();
             _needResolveHero = true;
             _needResolvePlacement = false;
             _needResolveOfferedHeroes = true;
@@ -177,10 +179,23 @@ namespace HDTplugins.Services
                     .Where(id => id > 0)
                     .ToArray();
 
-                if (heroes == null || heroes.Length == 0 || SameArray(heroes, OfferedHeroDbfIds))
+                if (heroes == null || heroes.Length == 0)
                     return;
 
-                OfferedHeroDbfIds = heroes;
+                var mergedHeroes = OfferedHeroDbfIds
+                    .Concat(heroes)
+                    .Distinct()
+                    .OrderBy(id => id)
+                    .ToArray();
+                if (SameArray(mergedHeroes, OfferedHeroDbfIds))
+                    return;
+
+                OfferedHeroDbfIds = mergedHeroes;
+                OfferedHeroCardIds = mergedHeroes
+                    .Select(id => Cards.GetFromDbfId(id)?.Id)
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
                 if (nowTs < _nextOfferedLogTs)
                     return;
                 _nextOfferedLogTs = nowTs + MsToTicks(OfferedLogThrottleMs);

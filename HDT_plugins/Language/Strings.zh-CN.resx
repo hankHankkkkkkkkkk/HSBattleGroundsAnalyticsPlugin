@@ -411,6 +411,9 @@
   <data name="Settings_ScoreLineTop2" xml:space="preserve">
     <value>2.5（前二加分）</value>
   </data>
+  <data name="Settings_HeroSortLabel" xml:space="preserve">
+    <value>英雄页默认排序</value>
+  </data>
   <data name="RaceStats_TopCards" xml:space="preserve">
     <value>高频终局卡牌</value>
   </data>
@@ -428,5 +431,50 @@
   </data>
   <data name="RaceStats_HeaderAvgPlacement" xml:space="preserve">
     <value>平均排名</value>
+  </data>
+  <data name="HeroStats_HeaderHero" xml:space="preserve">
+    <value>英雄</value>
+  </data>
+  <data name="HeroStats_HeaderPicks" xml:space="preserve">
+    <value>出场数</value>
+  </data>
+  <data name="HeroStats_HeaderAvgPlacement" xml:space="preserve">
+    <value>平均排名</value>
+  </data>
+  <data name="HeroStats_HeaderPickRate" xml:space="preserve">
+    <value>选取率</value>
+  </data>
+  <data name="HeroStats_HeaderContribution" xml:space="preserve">
+    <value>贡献值</value>
+  </data>
+  <data name="HeroStats_ScoreLineHint" xml:space="preserve">
+    <value>贡献值得分线：{0}</value>
+  </data>
+  <data name="HeroStats_DetailSummary" xml:space="preserve">
+    <value>候选次数：{0}  出场数：{1}  平均排名：{2}</value>
+  </data>
+  <data name="HeroStats_BestRaces" xml:space="preserve">
+    <value>最佳种族</value>
+  </data>
+  <data name="HeroStats_WorstRaces" xml:space="preserve">
+    <value>较差种族</value>
+  </data>
+  <data name="HeroStats_Performance" xml:space="preserve">
+    <value>表现指标</value>
+  </data>
+  <data name="HeroStats_RaceItemFormat" xml:space="preserve">
+    <value>{0}（{1}场，均排 {2}，变化 {3}）</value>
+  </data>
+  <data name="HeroStats_FirstRate" xml:space="preserve">
+    <value>吃鸡率</value>
+  </data>
+  <data name="HeroStats_LastRate" xml:space="preserve">
+    <value>速八率</value>
+  </data>
+  <data name="HeroStats_ScoreRate" xml:space="preserve">
+    <value>得分率</value>
+  </data>
+  <data name="HeroStats_ContributionPerGame" xml:space="preserve">
+    <value>场均贡献</value>
   </data>
 </root>

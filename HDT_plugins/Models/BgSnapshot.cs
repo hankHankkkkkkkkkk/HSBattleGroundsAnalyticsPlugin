@@ -19,6 +19,7 @@ namespace HDTplugins.Models
         public int RatingDelta { get; set; }
         public int Placement { get; set; }
 
+        public string[] OfferedHeroCardIds { get; set; }
         public string[] AvailableRaces { get; set; }
         public string AnomalyCardId { get; set; }
         public string AnomalyName { get; set; }

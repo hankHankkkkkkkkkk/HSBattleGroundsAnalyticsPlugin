@@ -17,7 +17,7 @@ namespace HDTplugins
         public string Name => Loc.S("Plugin_Name");
         public string Description => Loc.S("Plugin_Description");
         public string Author => "Hank";
-        public Version Version => new Version(0, 9, 3);
+        public Version Version => new Version(0, 10, 1);
         public string ButtonText => Loc.S("Plugin_ButtonText");
         public MenuItem MenuItem => _menuItem;
 
@@ -99,6 +99,7 @@ namespace HDTplugins
                     _probe.Placement,
                     _probe.RatingBefore,
                     _probe.RatingAfter,
+                    _probe.OfferedHeroCardIds,
                     _probe.AvailableRaceNames,
                     _probe.AnomalyCardId,
                     _probe.FinalBoard,

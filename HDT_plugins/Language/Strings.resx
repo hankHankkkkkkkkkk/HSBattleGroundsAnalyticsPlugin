@@ -307,6 +307,9 @@
   <data name="Settings_ScoreLineTop2" xml:space="preserve">
     <value>2.5 (Top 2 gains)</value>
   </data>
+  <data name="Settings_HeroSortLabel" xml:space="preserve">
+    <value>Hero default sort</value>
+  </data>
   <data name="RaceStats_TopCards" xml:space="preserve">
     <value>Top cards</value>
   </data>
@@ -324,5 +327,50 @@
   </data>
   <data name="RaceStats_HeaderAvgPlacement" xml:space="preserve">
     <value>Avg Placement</value>
+  </data>
+  <data name="HeroStats_HeaderHero" xml:space="preserve">
+    <value>Hero</value>
+  </data>
+  <data name="HeroStats_HeaderPicks" xml:space="preserve">
+    <value>Picks</value>
+  </data>
+  <data name="HeroStats_HeaderAvgPlacement" xml:space="preserve">
+    <value>Avg Placement</value>
+  </data>
+  <data name="HeroStats_HeaderPickRate" xml:space="preserve">
+    <value>Pick Rate</value>
+  </data>
+  <data name="HeroStats_HeaderContribution" xml:space="preserve">
+    <value>Contribution</value>
+  </data>
+  <data name="HeroStats_ScoreLineHint" xml:space="preserve">
+    <value>Contribution score line uses: {0}</value>
+  </data>
+  <data name="HeroStats_DetailSummary" xml:space="preserve">
+    <value>Offered: {0}  Picks: {1}  Avg Placement: {2}</value>
+  </data>
+  <data name="HeroStats_BestRaces" xml:space="preserve">
+    <value>Best races</value>
+  </data>
+  <data name="HeroStats_WorstRaces" xml:space="preserve">
+    <value>Worst races</value>
+  </data>
+  <data name="HeroStats_Performance" xml:space="preserve">
+    <value>Performance</value>
+  </data>
+  <data name="HeroStats_RaceItemFormat" xml:space="preserve">
+    <value>{0} ({1} games, avg {2}, delta {3})</value>
+  </data>
+  <data name="HeroStats_FirstRate" xml:space="preserve">
+    <value>First Rate</value>
+  </data>
+  <data name="HeroStats_LastRate" xml:space="preserve">
+    <value>Last Rate</value>
+  </data>
+  <data name="HeroStats_ScoreRate" xml:space="preserve">
+    <value>Score Rate</value>
+  </data>
+  <data name="HeroStats_ContributionPerGame" xml:space="preserve">
+    <value>Contribution / Game</value>
   </data>
 </root>

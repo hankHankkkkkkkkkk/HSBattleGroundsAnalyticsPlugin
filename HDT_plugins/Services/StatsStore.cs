@@ -15,6 +15,7 @@ namespace HDTplugins.Services
     public class StatsStore
     {
         private readonly JavaScriptSerializer _serializer = new JavaScriptSerializer();
+        private readonly HeroStatsAggregationService _heroStatsService = new HeroStatsAggregationService();
         private readonly LineupTagService _lineupTagService = new LineupTagService();
         private readonly VersionDisplayService _versionDisplayService = new VersionDisplayService();
 
@@ -221,6 +222,11 @@ namespace HDTplugins.Services
                 .ToList();
         }
 
+        public HeroStatsSummary LoadHeroStats(double scoreLine)
+        {
+            return _heroStatsService.BuildSummary(LoadSnapshots(), scoreLine);
+        }
+
         public BgSnapshot LoadSnapshot(string matchId)
         {
             if (string.IsNullOrWhiteSpace(matchId))
@@ -291,7 +297,7 @@ namespace HDTplugins.Services
             }
         }
 
-        public void FinalizeIfPossible(string matchId, string timestamp, string heroCardId, string heroSkinCardId, string initialHeroPowerCardId, string finalHeroPowerCardId, int placement, int ratingBefore, int ratingAfter, string[] availableRaces, string anomalyCardId, IReadOnlyCollection<BgBoardMinionSnapshot> finalBoard, IReadOnlyCollection<BgTavernUpgradePoint> tavernUpgradeTimeline)
+        public void FinalizeIfPossible(string matchId, string timestamp, string heroCardId, string heroSkinCardId, string initialHeroPowerCardId, string finalHeroPowerCardId, int placement, int ratingBefore, int ratingAfter, string[] offeredHeroCardIds, string[] availableRaces, string anomalyCardId, IReadOnlyCollection<BgBoardMinionSnapshot> finalBoard, IReadOnlyCollection<BgTavernUpgradePoint> tavernUpgradeTimeline)
         {
             try
             {
@@ -322,6 +328,10 @@ namespace HDTplugins.Services
                     RatingBefore = ratingBefore,
                     RatingAfter = ratingAfter,
                     RatingDelta = (ratingBefore > 0 && ratingAfter > 0) ? (ratingAfter - ratingBefore) : 0,
+                    OfferedHeroCardIds = (offeredHeroCardIds ?? Array.Empty<string>())
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToArray(),
                     AvailableRaces = availableRaces ?? Array.Empty<string>(),
                     AnomalyCardId = anomalyCardId ?? string.Empty,
                     AnomalyName = GetCardName(anomalyCardId),
@@ -487,6 +497,10 @@ namespace HDTplugins.Services
 
         private BgSnapshot NormalizeSnapshot(BgSnapshot snapshot)
         {
+            snapshot.OfferedHeroCardIds = (snapshot.OfferedHeroCardIds ?? Array.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
             snapshot.AvailableRaces = snapshot.AvailableRaces ?? Array.Empty<string>();
             snapshot.FinalBoardCardIds = snapshot.FinalBoardCardIds ?? Array.Empty<string>();
             snapshot.FinalBoard = (snapshot.FinalBoard ?? new List<BgBoardMinionSnapshot>())
@@ -659,6 +673,7 @@ namespace HDTplugins.Services
             }
 
             row.BestSynergies = synergies
+                .Where(x => x.PlacementDelta < -0.001)
                 .OrderBy(x => x.PlacementDelta)
                 .ThenByDescending(x => x.MatchCount)
                 .Take(2)
@@ -669,7 +684,7 @@ namespace HDTplugins.Services
                 StringComparer.OrdinalIgnoreCase);
 
             row.WorstSynergies = synergies
-                .Where(x => !bestRaceCodes.Contains(x.RaceCode ?? string.Empty))
+                .Where(x => x.PlacementDelta > 0.001 && !bestRaceCodes.Contains(x.RaceCode ?? string.Empty))
                 .OrderByDescending(x => x.PlacementDelta)
                 .ThenByDescending(x => x.MatchCount)
                 .Take(2)

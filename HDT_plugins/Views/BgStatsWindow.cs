@@ -43,6 +43,14 @@ namespace HDTplugins.Views
             ScoreRate
         }
 
+        private enum HeroSortColumn
+        {
+            Picks,
+            AveragePlacement,
+            Contribution,
+            PickRate
+        }
+
         private readonly StatsStore _store;
         private readonly PluginSettingsService _settingsService;
         private readonly Dictionary<SidebarSection, Button> _sectionButtons = new Dictionary<SidebarSection, Button>();
@@ -65,6 +73,9 @@ namespace HDTplugins.Views
         private RaceSortColumn _raceSortColumn = RaceSortColumn.AveragePlacement;
         private bool _raceSortDescending;
         private string _expandedRaceCode;
+        private HeroSortColumn _heroSortColumn = HeroSortColumn.Picks;
+        private bool _heroSortDescending = true;
+        private string _expandedHeroCardId;
         private DateTime _anchorDate = DateTime.Today;
         private static readonly Brush PositiveValueBrush = CreateBrush(88, 150, 96);
         private static readonly Brush NegativeValueBrush = CreateBrush(198, 92, 84);
@@ -126,7 +137,7 @@ namespace HDTplugins.Views
         public void Reload()
         {
             RefreshVersionButton();
-            if (_currentSection == SidebarSection.Settings || _currentSection == SidebarSection.Races)
+            if (_currentSection == SidebarSection.Settings || _currentSection == SidebarSection.Races || _currentSection == SidebarSection.Heroes)
             {
                 RebuildContent();
                 return;
@@ -358,6 +369,11 @@ namespace HDTplugins.Views
                     _raceSortDescending = false;
                     _expandedRaceCode = null;
                 }
+                if (section == SidebarSection.Heroes)
+                {
+                    LoadHeroSortPreference();
+                    _expandedHeroCardId = null;
+                }
                 RefreshSectionButtons();
                 RebuildContent();
             };
@@ -429,6 +445,14 @@ namespace HDTplugins.Views
                 _historyToolbar.Visibility = Visibility.Collapsed;
                 _sectionTitle.Text = GetSectionTitle();
                 _contentHost.Child = BuildRaceStatsView();
+                return;
+            }
+
+            if (_currentSection == SidebarSection.Heroes)
+            {
+                _historyToolbar.Visibility = Visibility.Collapsed;
+                _sectionTitle.Text = GetSectionTitle();
+                _contentHost.Child = BuildHeroStatsView();
                 return;
             }
 
@@ -542,6 +566,31 @@ namespace HDTplugins.Views
                     : scoreLineTop4;
             stack.Children.Add(scoreLineComboBox);
 
+            stack.Children.Add(new TextBlock
+            {
+                Text = Loc.S("Settings_HeroSortLabel"),
+                Foreground = Brushes.White,
+                FontSize = 14,
+                FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(0, 4, 0, 8)
+            });
+
+            var heroSortComboBox = new ComboBox
+            {
+                Margin = new Thickness(0, 0, 0, 12),
+                MinWidth = 220
+            };
+            var heroSortPicks = new ComboBoxItem { Content = Loc.S("HeroStats_HeaderPicks"), Tag = HeroSortColumn.Picks };
+            var heroSortAveragePlacement = new ComboBoxItem { Content = Loc.S("HeroStats_HeaderAvgPlacement"), Tag = HeroSortColumn.AveragePlacement };
+            var heroSortContribution = new ComboBoxItem { Content = Loc.S("HeroStats_HeaderContribution"), Tag = HeroSortColumn.Contribution };
+            var heroSortPickRate = new ComboBoxItem { Content = Loc.S("HeroStats_HeaderPickRate"), Tag = HeroSortColumn.PickRate };
+            heroSortComboBox.Items.Add(heroSortPicks);
+            heroSortComboBox.Items.Add(heroSortAveragePlacement);
+            heroSortComboBox.Items.Add(heroSortContribution);
+            heroSortComboBox.Items.Add(heroSortPickRate);
+            heroSortComboBox.SelectedItem = GetHeroSortComboItem(_settingsService.Settings.HeroStatsDefaultSort, heroSortPicks, heroSortAveragePlacement, heroSortContribution, heroSortPickRate);
+            stack.Children.Add(heroSortComboBox);
+
             var autoOpenCheckBox = new CheckBox
             {
                 Content = Loc.S("Settings_AutoOpenOnStartup"),
@@ -578,10 +627,15 @@ namespace HDTplugins.Views
             {
                 var selectedLanguage = (languageComboBox.SelectedItem as ComboBoxItem)?.Tag as string;
                 var selectedScoreLine = (scoreLineComboBox.SelectedItem as ComboBoxItem)?.Tag;
+                var selectedHeroSort = (heroSortComboBox.SelectedItem as ComboBoxItem)?.Tag;
                 _settingsService.Settings.AutoOpenOnStartup = autoOpenCheckBox.IsChecked != false;
                 _settingsService.Settings.Language = LocalizationService.NormalizeCulture(selectedLanguage).Name;
                 _settingsService.Settings.ScoreLine = selectedScoreLine is double scoreLine ? scoreLine : 4.5;
+                _settingsService.Settings.HeroStatsDefaultSort = selectedHeroSort is HeroSortColumn heroSortColumn
+                    ? heroSortColumn.ToString()
+                    : HeroSortColumn.Picks.ToString();
                 _settingsService.Save();
+                LoadHeroSortPreference();
                 LocalizationService.SetLanguage(_settingsService.Settings.Language);
             };
             stack.Children.Add(saveButton);
@@ -896,6 +950,351 @@ namespace HDTplugins.Views
             if (Math.Abs(scoreLine - 3.5) < 0.01)
                 return Loc.S("Settings_ScoreLineTop3");
             return Loc.S("Settings_ScoreLineTop4");
+        }
+
+        private object GetHeroSortComboItem(string sortValue, params ComboBoxItem[] items)
+        {
+            if (!Enum.TryParse(sortValue, true, out HeroSortColumn sortColumn))
+                sortColumn = HeroSortColumn.Picks;
+
+            foreach (var item in items)
+            {
+                if (item?.Tag is HeroSortColumn column && column == sortColumn)
+                    return item;
+            }
+
+            return items.FirstOrDefault();
+        }
+
+        private void LoadHeroSortPreference()
+        {
+            _settingsService.Reload();
+            if (!Enum.TryParse(_settingsService.Settings.HeroStatsDefaultSort, true, out _heroSortColumn))
+                _heroSortColumn = HeroSortColumn.Picks;
+
+            _heroSortDescending = _heroSortColumn != HeroSortColumn.AveragePlacement;
+        }
+
+        private UIElement BuildHeroStatsView()
+        {
+            _settingsService.Reload();
+            var summary = _store.LoadHeroStats(_settingsService.Settings.GetNormalizedScoreLine());
+            var rows = SortHeroRows(summary.Heroes);
+            var scrollViewer = new ScrollViewer
+            {
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+            };
+
+            var root = new StackPanel();
+            scrollViewer.Content = root;
+            root.Children.Add(BuildHeroOverviewCard(summary));
+            root.Children.Add(BuildHeroHeaderRow());
+
+            if (rows.Count == 0)
+            {
+                root.Children.Add(new TextBlock
+                {
+                    Text = Loc.S("Common_NoData"),
+                    Foreground = new SolidColorBrush(Color.FromRgb(126, 118, 108)),
+                    FontSize = 15,
+                    Margin = new Thickness(0, 20, 0, 0)
+                });
+                return scrollViewer;
+            }
+
+            foreach (var row in rows)
+                root.Children.Add(BuildHeroRow(row));
+
+            return scrollViewer;
+        }
+
+        private IReadOnlyList<HeroStatsRow> SortHeroRows(IReadOnlyList<HeroStatsRow> rows)
+        {
+            var ordered = rows ?? Array.Empty<HeroStatsRow>();
+            switch (_heroSortColumn)
+            {
+                case HeroSortColumn.AveragePlacement:
+                    return (_heroSortDescending
+                        ? ordered.OrderByDescending(x => x.AveragePlacement)
+                        : ordered.OrderBy(x => x.AveragePlacement))
+                        .ThenByDescending(x => x.Picks)
+                        .ThenByDescending(x => x.ContributionValue)
+                        .ThenBy(x => x.HeroName, StringComparer.CurrentCultureIgnoreCase)
+                        .ToList();
+                case HeroSortColumn.Contribution:
+                    return (_heroSortDescending
+                        ? ordered.OrderByDescending(x => x.ContributionValue)
+                        : ordered.OrderBy(x => x.ContributionValue))
+                        .ThenByDescending(x => x.Picks)
+                        .ThenBy(x => x.AveragePlacement)
+                        .ThenBy(x => x.HeroName, StringComparer.CurrentCultureIgnoreCase)
+                        .ToList();
+                case HeroSortColumn.PickRate:
+                    return (_heroSortDescending
+                        ? ordered.OrderByDescending(x => x.PickRate)
+                        : ordered.OrderBy(x => x.PickRate))
+                        .ThenByDescending(x => x.Picks)
+                        .ThenByDescending(x => x.ContributionValue)
+                        .ThenBy(x => x.HeroName, StringComparer.CurrentCultureIgnoreCase)
+                        .ToList();
+                default:
+                    return (_heroSortDescending
+                        ? ordered.OrderByDescending(x => x.Picks)
+                        : ordered.OrderBy(x => x.Picks))
+                        .ThenByDescending(x => x.ContributionValue)
+                        .ThenBy(x => x.AveragePlacement)
+                        .ThenBy(x => x.HeroName, StringComparer.CurrentCultureIgnoreCase)
+                        .ToList();
+            }
+        }
+
+        private UIElement BuildHeroOverviewCard(HeroStatsSummary summary)
+        {
+            var border = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
+                Padding = new Thickness(14, 10, 14, 10),
+                Margin = new Thickness(0, 0, 0, 10)
+            };
+
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            border.Child = grid;
+
+            var summaryBlock = new TextBlock
+            {
+                FontSize = 14,
+                TextAlignment = TextAlignment.Right
+            };
+            AppendLabelValue(summaryBlock.Inlines, Loc.S("Common_MatchesLabel"), summary.TotalMatches.ToString(CultureInfo.CurrentCulture), LightForegroundBrush);
+            AppendSpacer(summaryBlock.Inlines, "  ");
+            AppendLabelValue(summaryBlock.Inlines, Loc.S("Common_AvgPlacementLabel"), summary.TotalMatches > 0 ? summary.OverallAveragePlacement.ToString("F2", CultureInfo.CurrentCulture) : "-", summary.TotalMatches > 0 ? GetPlacementBrush(summary.OverallAveragePlacement) : LightForegroundBrush);
+            summaryBlock.HorizontalAlignment = HorizontalAlignment.Right;
+            grid.Children.Add(summaryBlock);
+
+            return border;
+        }
+
+        private UIElement BuildHeroHeaderRow()
+        {
+            var border = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
+                Padding = new Thickness(14, 10, 14, 10),
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.4, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.9, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
+            border.Child = grid;
+
+            grid.Children.Add(CreateHeroHeaderLabel("HeroStats_HeaderHero", 0, false));
+            grid.Children.Add(CreateHeroHeaderButton("HeroStats_HeaderPicks", HeroSortColumn.Picks, 1));
+            grid.Children.Add(CreateHeroHeaderButton("HeroStats_HeaderAvgPlacement", HeroSortColumn.AveragePlacement, 2));
+            grid.Children.Add(CreateHeroHeaderButton("HeroStats_HeaderPickRate", HeroSortColumn.PickRate, 3));
+            grid.Children.Add(CreateHeroHeaderButton("HeroStats_HeaderContribution", HeroSortColumn.Contribution, 4));
+
+            return border;
+        }
+
+        private UIElement CreateHeroHeaderLabel(string resourceKey, int columnIndex, bool centered)
+        {
+            var block = new TextBlock
+            {
+                Text = Loc.S(resourceKey),
+                Foreground = Brushes.White,
+                FontSize = 14,
+                FontWeight = FontWeights.SemiBold,
+                HorizontalAlignment = centered ? HorizontalAlignment.Center : HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            Grid.SetColumn(block, columnIndex);
+            return block;
+        }
+
+        private UIElement CreateHeroHeaderButton(string resourceKey, HeroSortColumn column, int columnIndex)
+        {
+            var button = new Button
+            {
+                Content = Loc.S(resourceKey),
+                Background = Brushes.Transparent,
+                BorderBrush = Brushes.Transparent,
+                Foreground = Brushes.White,
+                FontSize = 14,
+                FontWeight = FontWeights.SemiBold,
+                HorizontalContentAlignment = HorizontalAlignment.Center,
+                Cursor = Cursors.Hand
+            };
+            button.Click += delegate
+            {
+                if (_heroSortColumn == column)
+                    _heroSortDescending = !_heroSortDescending;
+                else
+                {
+                    _heroSortColumn = column;
+                    _heroSortDescending = column != HeroSortColumn.AveragePlacement;
+                }
+
+                _contentHost.Child = BuildHeroStatsView();
+            };
+            Grid.SetColumn(button, columnIndex);
+            return button;
+        }
+
+        private UIElement BuildHeroRow(HeroStatsRow row)
+        {
+            var container = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
+            var summaryBorder = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(241, 238, 233)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(210, 205, 197)),
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(14, 12, 14, 12),
+                Cursor = Cursors.Hand
+            };
+
+            var summaryGrid = new Grid();
+            summaryGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.4, GridUnitType.Star) });
+            summaryGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.9, GridUnitType.Star) });
+            summaryGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
+            summaryGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
+            summaryGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
+            summaryBorder.Child = summaryGrid;
+
+            summaryGrid.Children.Add(CreateHeroSummaryText(row.HeroName, 0, HorizontalAlignment.Left, FontWeights.SemiBold, DarkForegroundBrush));
+            summaryGrid.Children.Add(CreateHeroSummaryText(row.Picks.ToString(CultureInfo.CurrentCulture), 1, HorizontalAlignment.Center, FontWeights.Normal, DarkForegroundBrush));
+            summaryGrid.Children.Add(CreateHeroSummaryText(row.AveragePlacement.ToString("F2", CultureInfo.CurrentCulture), 2, HorizontalAlignment.Center, FontWeights.Normal, GetPlacementBrush(row.AveragePlacement)));
+            summaryGrid.Children.Add(CreateHeroSummaryText(FormatRate(row.PickRate, row.HasPickRateData), 3, HorizontalAlignment.Center, FontWeights.Normal, DarkForegroundBrush));
+            summaryGrid.Children.Add(CreateHeroSummaryText(FormatSignedDouble(row.ContributionValue), 4, HorizontalAlignment.Center, FontWeights.Normal, GetDeltaBrush(row.ContributionValue)));
+
+            summaryBorder.MouseLeftButtonUp += delegate
+            {
+                _expandedHeroCardId = string.Equals(_expandedHeroCardId, row.HeroCardId, StringComparison.OrdinalIgnoreCase) ? null : row.HeroCardId;
+                _contentHost.Child = BuildHeroStatsView();
+            };
+
+            container.Children.Add(summaryBorder);
+            if (string.Equals(_expandedHeroCardId, row.HeroCardId, StringComparison.OrdinalIgnoreCase))
+                container.Children.Add(BuildHeroDetail(row));
+
+            return container;
+        }
+
+        private UIElement CreateHeroSummaryText(string text, int columnIndex, HorizontalAlignment alignment, FontWeight fontWeight, Brush foreground)
+        {
+            var block = new TextBlock
+            {
+                Text = text,
+                Foreground = foreground,
+                FontSize = 14,
+                FontWeight = fontWeight,
+                HorizontalAlignment = alignment,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextWrapping = TextWrapping.Wrap
+            };
+            Grid.SetColumn(block, columnIndex);
+            return block;
+        }
+
+        private UIElement BuildHeroDetail(HeroStatsRow row)
+        {
+            var border = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
+                Padding = new Thickness(16),
+                Margin = new Thickness(0, 2, 0, 0)
+            };
+
+            var root = new StackPanel();
+            border.Child = root;
+
+            root.Children.Add(new TextBlock
+            {
+                Text = Loc.F("HeroStats_DetailSummary", row.OfferedCount, row.Picks, row.AveragePlacement.ToString("F2", CultureInfo.CurrentCulture)),
+                Foreground = LightForegroundBrush,
+                FontSize = 13,
+                Margin = new Thickness(0, 0, 0, 12)
+            });
+
+            var detailGrid = new Grid();
+            detailGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            detailGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            root.Children.Add(detailGrid);
+
+            var leftColumn = new StackPanel { Margin = new Thickness(0, 0, 18, 0) };
+            leftColumn.Children.Add(BuildRaceDetailSection(Loc.S("HeroStats_BestRaces"), BuildHeroRaceList(row.BestRaces)));
+            leftColumn.Children.Add(BuildRaceDetailSection(Loc.S("HeroStats_WorstRaces"), BuildHeroRaceList(row.WorstRaces), false));
+            Grid.SetColumn(leftColumn, 0);
+            detailGrid.Children.Add(leftColumn);
+
+            var rightColumn = new StackPanel();
+            rightColumn.Children.Add(BuildRaceDetailSection(Loc.S("HeroStats_Performance"), BuildHeroMetricGrid(row), false));
+            Grid.SetColumn(rightColumn, 1);
+            detailGrid.Children.Add(rightColumn);
+
+            return border;
+        }
+
+        private UIElement BuildHeroRaceList(IReadOnlyList<HeroRaceAffinityStat> races)
+        {
+            if (races == null || races.Count == 0)
+                return BuildRaceTextValue(Loc.S("Common_NoData"));
+
+            var stack = new StackPanel();
+            foreach (var race in races)
+            {
+                stack.Children.Add(new TextBlock
+                {
+                    Text = Loc.F("HeroStats_RaceItemFormat", race.RaceName, race.MatchCount, race.AveragePlacement.ToString("F2", CultureInfo.CurrentCulture), FormatSignedDouble(race.PlacementDelta)),
+                    Foreground = GetPlacementDeltaBrush(race.PlacementDelta),
+                    FontSize = 13,
+                    TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(0, 0, 0, 4)
+                });
+            }
+
+            return stack;
+        }
+
+        private UIElement BuildHeroMetricGrid(HeroStatsRow row)
+        {
+            var stack = new StackPanel();
+            stack.Children.Add(BuildHeroMetricText("HeroStats_FirstRate", FormatRate(row.FirstRate, row.Picks > 0), DarkForegroundBrush));
+            stack.Children.Add(BuildHeroMetricText("HeroStats_LastRate", FormatRate(row.LastRate, row.Picks > 0), DarkForegroundBrush));
+            stack.Children.Add(BuildHeroMetricText("HeroStats_ScoreRate", FormatRate(row.ScoreRate, row.Picks > 0), DarkForegroundBrush));
+            stack.Children.Add(BuildHeroMetricText("HeroStats_ContributionPerGame", FormatSignedDouble(row.ContributionPerGame), GetDeltaBrush(row.ContributionPerGame)));
+            return stack;
+        }
+
+        private UIElement BuildHeroMetricText(string labelKey, string value, Brush valueBrush)
+        {
+            var block = new TextBlock
+            {
+                FontSize = 13,
+                Margin = new Thickness(0, 0, 0, 4)
+            };
+            AppendLabelValue(block.Inlines, Loc.S(labelKey), value, valueBrush);
+            return block;
+        }
+
+        private Brush GetPlacementDeltaBrush(double delta)
+        {
+            if (delta < -0.001)
+                return PositiveValueBrush;
+            if (delta > 0.001)
+                return NegativeValueBrush;
+            return LightForegroundBrush;
+        }
+
+        private string FormatSignedDouble(double value)
+        {
+            var formatted = value.ToString("F2", CultureInfo.CurrentCulture);
+            return value > 0.001 ? "+" + formatted : formatted;
         }
 
         private UIElement BuildPlaceholder()
