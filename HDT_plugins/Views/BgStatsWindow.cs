@@ -1665,13 +1665,28 @@ namespace HDTplugins.Views
             section.Child = grid;
 
             grid.Children.Add(CreateInfoText(Loc.F("MatchDetail_SelectedHeroFormat", GameTextService.GetCardName(snapshot.HeroCardId, snapshot.HeroName))));
-            if (!string.IsNullOrWhiteSpace(snapshot.HeroPowerCardId) && !string.Equals(snapshot.HeroPowerCardId, snapshot.InitialHeroPowerCardId, StringComparison.OrdinalIgnoreCase))
+            var finalHeroPowers = GetFinalHeroPowersForDisplay(snapshot);
+            var shouldShowFinalHeroPowers = finalHeroPowers.Count > 1
+                || (finalHeroPowers.Count == 1 && !string.Equals(finalHeroPowers[0], snapshot.InitialHeroPowerCardId, StringComparison.OrdinalIgnoreCase));
+            if (shouldShowFinalHeroPowers)
             {
-                var finalPower = CreateInfoText(Loc.F("MatchDetail_FinalHeroPowerFormat", GameTextService.GetCardName(snapshot.HeroPowerCardId, snapshot.HeroPowerCardId)));
+                var displayText = string.Join(" / ", finalHeroPowers.Select(cardId => GameTextService.GetCardName(cardId, cardId)));
+                var finalPower = CreateInfoText(Loc.F("MatchDetail_FinalHeroPowerFormat", displayText));
                 Grid.SetColumn(finalPower, 1);
                 grid.Children.Add(finalPower);
             }
             return section;
+        }
+
+        private static List<string> GetFinalHeroPowersForDisplay(BgSnapshot snapshot)
+        {
+            var result = new List<string>();
+            if (!string.IsNullOrWhiteSpace(snapshot?.HeroPowerCardId))
+                result.Add(snapshot.HeroPowerCardId);
+            if (!string.IsNullOrWhiteSpace(snapshot?.SecondHeroPowerCardId)
+                && !result.Contains(snapshot.SecondHeroPowerCardId, StringComparer.OrdinalIgnoreCase))
+                result.Add(snapshot.SecondHeroPowerCardId);
+            return result;
         }
 
         private TextBlock CreateInfoText(string text)

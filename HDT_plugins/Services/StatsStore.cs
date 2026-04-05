@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Web.Script.Serialization;
 
 using HdtLog = Hearthstone_Deck_Tracker.Utility.Logging.Log;
@@ -208,7 +209,7 @@ namespace HDTplugins.Services
                 {
                     MatchId = snapshot.MatchId,
                     TimestampLocal = ParseTimestamp(snapshot.Timestamp),
-                    GameVersion = snapshot.GameVersion,
+                    GameVersion = GetDisplayGameVersion(snapshot.GameVersion),
                     Placement = snapshot.Placement,
                     RatingAfter = snapshot.RatingAfter,
                     RatingDelta = snapshot.RatingDelta,
@@ -231,7 +232,10 @@ namespace HDTplugins.Services
         {
             if (string.IsNullOrWhiteSpace(matchId))
                 return null;
-            return LoadSnapshots().FirstOrDefault(x => string.Equals(x.MatchId, matchId, StringComparison.OrdinalIgnoreCase));
+            var snapshot = LoadSnapshots().FirstOrDefault(x => string.Equals(x.MatchId, matchId, StringComparison.OrdinalIgnoreCase));
+            if (snapshot != null)
+                snapshot.GameVersion = GetDisplayGameVersion(snapshot.GameVersion);
+            return snapshot;
         }
 
         public bool UpdateManualTags(string matchId, IReadOnlyCollection<string> manualTags)
@@ -268,7 +272,7 @@ namespace HDTplugins.Services
             }
         }
 
-        public void WritePendingIfNeeded(string heroCardId, string heroSkinCardId, string initialHeroPowerCardId, int ratingBefore)
+        public void WritePendingIfNeeded(string heroCardId, string heroSkinCardId, string initialHeroPowerCardId, string initialSecondHeroPowerCardId, int ratingBefore)
         {
             try
             {
@@ -283,10 +287,11 @@ namespace HDTplugins.Services
                 var pendingLine = "{"
                     + $"\"matchId\":\"{JsonEscape(CurrentMatchId)}\"," 
                     + $"\"timestamp\":\"{JsonEscape(CurrentMatchTimestampUtc)}\"," 
-                    + $"\"gameVersion\":\"{JsonEscape((_activeMatchArchive ?? CurrentArchive)?.DisplayName ?? string.Empty)}\"," 
+                    + $"\"gameVersion\":\"{JsonEscape((_activeMatchArchive ?? CurrentArchive)?.PatchVersion ?? string.Empty)}\"," 
                     + $"\"heroCardId\":\"{JsonEscape(heroCardId)}\"," 
                     + $"\"heroSkinCardId\":\"{JsonEscape(heroSkinCardId ?? string.Empty)}\"," 
-                    + $"\"initialHeroPowerCardId\":\"{JsonEscape(initialHeroPowerCardId ?? string.Empty)}\""
+                    + $"\"initialHeroPowerCardId\":\"{JsonEscape(initialHeroPowerCardId ?? string.Empty)}\","
+                    + $"\"initialSecondHeroPowerCardId\":\"{JsonEscape(initialSecondHeroPowerCardId ?? string.Empty)}\""
                     + "}";
 
                 File.AppendAllText(pendingFilePath, pendingLine + Environment.NewLine, Encoding.UTF8);
@@ -297,7 +302,7 @@ namespace HDTplugins.Services
             }
         }
 
-        public void FinalizeIfPossible(string matchId, string timestamp, string heroCardId, string heroSkinCardId, string initialHeroPowerCardId, string finalHeroPowerCardId, int placement, int ratingBefore, int ratingAfter, string[] offeredHeroCardIds, string[] availableRaces, string anomalyCardId, IReadOnlyCollection<BgBoardMinionSnapshot> finalBoard, IReadOnlyCollection<BgTavernUpgradePoint> tavernUpgradeTimeline)
+        public void FinalizeIfPossible(string matchId, string timestamp, string heroCardId, string heroSkinCardId, string initialHeroPowerCardId, string initialSecondHeroPowerCardId, string finalHeroPowerCardId, string secondHeroPowerCardId, int placement, int ratingBefore, int ratingAfter, string[] offeredHeroCardIds, string[] availableRaces, string anomalyCardId, IReadOnlyCollection<BgBoardMinionSnapshot> finalBoard, IReadOnlyCollection<BgTavernUpgradePoint> tavernUpgradeTimeline)
         {
             try
             {
@@ -307,6 +312,7 @@ namespace HDTplugins.Services
                 if (string.IsNullOrEmpty(heroCardId) || placement <= 0 || ratingAfter <= 0)
                     return;
 
+                HdtLog.Info($"[BGStats] Finalizing snapshot: matchId={matchId}, heroCardId={heroCardId}, initialHeroPowerCardId={initialHeroPowerCardId ?? "null"}, initialSecondHeroPowerCardId={initialSecondHeroPowerCardId ?? "null"}, finalHeroPowerCardId={finalHeroPowerCardId ?? "null"}, secondHeroPowerCardId={secondHeroPowerCardId ?? "null"}, placement={placement}, ratingBefore={ratingBefore}, ratingAfter={ratingAfter}");
                 RemovePendingByMatchId(matchId);
 
                 var normalizedBoard = (finalBoard ?? Array.Empty<BgBoardMinionSnapshot>())
@@ -318,12 +324,14 @@ namespace HDTplugins.Services
                 {
                     MatchId = matchId,
                     Timestamp = string.IsNullOrEmpty(timestamp) ? DateTime.UtcNow.ToString("o") : timestamp,
-                    GameVersion = (_activeMatchArchive ?? CurrentArchive)?.DisplayName ?? string.Empty,
+                    GameVersion = (_activeMatchArchive ?? CurrentArchive)?.PatchVersion ?? string.Empty,
                     HeroCardId = heroCardId,
                     HeroName = GetCardName(heroCardId),
                     HeroSkinCardId = heroSkinCardId ?? string.Empty,
                     InitialHeroPowerCardId = initialHeroPowerCardId ?? string.Empty,
+                    InitialSecondHeroPowerCardId = initialSecondHeroPowerCardId ?? string.Empty,
                     HeroPowerCardId = finalHeroPowerCardId ?? string.Empty,
+                    SecondHeroPowerCardId = secondHeroPowerCardId ?? string.Empty,
                     Placement = placement,
                     RatingBefore = ratingBefore,
                     RatingAfter = ratingAfter,
@@ -403,7 +411,7 @@ namespace HDTplugins.Services
 
         private ArchiveVersionInfo ResolveBestArchiveForCurrentVersion()
         {
-            var detected = ArchiveKeyProvider.ResolveCurrentArchive(_versionDisplayService.MapVersion);
+            var detected = ArchiveKeyProvider.ResolveCurrentArchive(_versionDisplayService.RememberAndMapVersion);
             if (detected == null)
                 return ArchiveKeyProvider.GetDefaultArchive();
 
@@ -530,6 +538,22 @@ namespace HDTplugins.Services
             }
 
             return snapshot;
+        }
+
+        private string GetDisplayGameVersion(string storedVersion)
+        {
+            if (string.IsNullOrWhiteSpace(storedVersion))
+                return string.Empty;
+
+            var normalized = storedVersion.Trim();
+            return IsRawGameVersion(normalized)
+                ? _versionDisplayService.MapVersion(normalized)
+                : normalized;
+        }
+
+        private static bool IsRawGameVersion(string value)
+        {
+            return Regex.IsMatch(value ?? string.Empty, "^\\d+(?:\\.\\d+)+$");
         }
 
         private BgSnapshot SafeDeserialize(string line)
@@ -737,18 +761,24 @@ namespace HDTplugins.Services
             if (archive == null || string.IsNullOrWhiteSpace(archive.PatchVersion))
                 return long.MinValue;
 
-            var parts = archive.PatchVersion.Split('.');
-            long major = 0;
-            long minor = 0;
-            long patch = 0;
-            if (parts.Length > 0)
-                long.TryParse(parts[0], out major);
-            if (parts.Length > 1)
-                long.TryParse(parts[1], out minor);
-            if (parts.Length > 2)
-                long.TryParse(parts[2], out patch);
-
-            return major * 1_000_000L + minor * 1_000L + patch;
+            try
+            {
+                unchecked
+                {
+                    long score = 0;
+                    foreach (var part in archive.PatchVersion.Split('.'))
+                    {
+                        long value = 0;
+                        long.TryParse(part, out value);
+                        score = (score * 1_000_000L) + Math.Min(value, 999_999L);
+                    }
+                    return score;
+                }
+            }
+            catch
+            {
+                return long.MinValue;
+            }
         }
 
         private static string BuildFinalBoardDisplay(BgSnapshot snapshot)

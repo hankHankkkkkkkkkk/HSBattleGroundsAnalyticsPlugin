@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using HdtLog = Hearthstone_Deck_Tracker.Utility.Logging.Log;
 
 namespace HDTplugins.Services
 {
@@ -29,30 +30,38 @@ namespace HDTplugins.Services
 
         public static ArchiveVersionInfo ResolveCurrentArchive(Func<string, string> mapDisplayName)
         {
-            var detectedPatch = TryDetectHearthstonePatchVersion();
-            if (string.IsNullOrEmpty(detectedPatch))
+            var detectedVersion = TryDetectHearthstoneVersion();
+            if (string.IsNullOrEmpty(detectedVersion))
+            {
+                HdtLog.Warn("[BGStats] 未检测到可用的炉石版本号，回退到默认归档");
                 return GetDefaultArchive();
+            }
 
-            if (!IsReasonablePatchVersion(detectedPatch))
+            if (!IsReasonablePatchVersion(detectedVersion))
+            {
+                HdtLog.Warn($"[BGStats] 检测到的炉石版本号不在预期范围内: {detectedVersion}，回退到默认归档");
                 return GetDefaultArchive();
+            }
 
-            var mappedDisplayName = mapDisplayName == null ? null : mapDisplayName(detectedPatch);
-            var matched = KnownArchives.FirstOrDefault(x => detectedPatch.StartsWith(x.PatchVersion, StringComparison.OrdinalIgnoreCase));
+            var mappedDisplayName = mapDisplayName == null ? null : mapDisplayName(detectedVersion);
+            HdtLog.Info($"[BGStats] 版本归档解析: detectedVersion={detectedVersion}, mappedDisplayName={mappedDisplayName ?? "(null)"}");
+            var matched = KnownArchives.FirstOrDefault(x => detectedVersion.StartsWith(x.PatchVersion, StringComparison.OrdinalIgnoreCase));
             if (matched != null)
             {
                 var info = Clone(matched);
                 if (!string.IsNullOrWhiteSpace(mappedDisplayName))
                     info.DisplayName = mappedDisplayName;
-                info.Key = BuildArchiveKeyFromRawVersion(detectedPatch, info.DisplayName);
+                info.Key = BuildArchiveKeyFromRawVersion(detectedVersion, info.DisplayName);
                 info.IsDetected = true;
+                info.PatchVersion = detectedVersion;
                 return info;
             }
 
             return new ArchiveVersionInfo
             {
-                Key = BuildArchiveKeyFromRawVersion(detectedPatch, mappedDisplayName),
-                DisplayName = string.IsNullOrWhiteSpace(mappedDisplayName) ? "patch" + detectedPatch : mappedDisplayName,
-                PatchVersion = detectedPatch,
+                Key = BuildArchiveKeyFromRawVersion(detectedVersion, mappedDisplayName),
+                DisplayName = string.IsNullOrWhiteSpace(mappedDisplayName) ? "patch" + detectedVersion : mappedDisplayName,
+                PatchVersion = detectedVersion,
                 IsDetected = true
             };
         }
@@ -67,13 +76,13 @@ namespace HDTplugins.Services
         public static ArchiveVersionInfo CreateFromStoredLabel(string key, string displayName)
         {
             var name = string.IsNullOrWhiteSpace(displayName) ? BuildDisplayNameFromKey(key) : displayName.Trim();
-            var match = Regex.Match(name, "(\\d+\\.\\d+)");
+            var match = MatchPatchVersion(name);
 
             return new ArchiveVersionInfo
             {
                 Key = string.IsNullOrWhiteSpace(key) ? BuildArchiveKey(name) : key,
                 DisplayName = name,
-                PatchVersion = match.Success ? match.Groups[1].Value : string.Empty
+                PatchVersion = match.Success ? match.Value : string.Empty
             };
         }
 
@@ -94,14 +103,23 @@ namespace HDTplugins.Services
             return key.Replace('_', ' ');
         }
 
-        private static string TryDetectHearthstonePatchVersion()
+        private static string TryDetectHearthstoneVersion()
         {
             try
             {
                 var processes = Process.GetProcesses()
                     .Where(p =>
                     {
-                        try { return p.ProcessName.IndexOf("Hearthstone", StringComparison.OrdinalIgnoreCase) >= 0; }
+                        try
+                        {
+                            return p.ProcessName.IndexOf("Hearthstone", StringComparison.OrdinalIgnoreCase) >= 0
+                                && p.ProcessName.IndexOf("DeckTracker", StringComparison.OrdinalIgnoreCase) < 0;
+                        }
+                        catch { return false; }
+                    })
+                    .OrderByDescending(p =>
+                    {
+                        try { return string.Equals(p.ProcessName, "Hearthstone", StringComparison.OrdinalIgnoreCase); }
                         catch { return false; }
                     })
                     .ToArray();
@@ -115,9 +133,14 @@ namespace HDTplugins.Services
                             continue;
 
                         var fileVersion = FileVersionInfo.GetVersionInfo(modulePath);
-                        var patch = NormalizePatchVersion(fileVersion.ProductVersion ?? fileVersion.FileVersion);
-                        if (!string.IsNullOrWhiteSpace(patch))
-                            return patch;
+                        var productVersion = fileVersion.ProductVersion ?? string.Empty;
+                        var binaryVersion = fileVersion.FileVersion ?? string.Empty;
+                        var normalizedVersion = NormalizePatchVersion(productVersion);
+                        if (string.IsNullOrWhiteSpace(normalizedVersion))
+                            normalizedVersion = NormalizePatchVersion(binaryVersion);
+                        HdtLog.Info($"[BGStats] 读取炉石进程版本: process={process.ProcessName}, path={modulePath}, productVersion={productVersion}, fileVersion={binaryVersion}, normalizedVersion={normalizedVersion ?? "null"}");
+                        if (!string.IsNullOrWhiteSpace(normalizedVersion))
+                            return normalizedVersion;
                     }
                     catch { }
                 }
@@ -132,8 +155,13 @@ namespace HDTplugins.Services
             if (string.IsNullOrWhiteSpace(rawVersion))
                 return null;
 
-            var match = Regex.Match(rawVersion, "(\\d+\\.\\d+)");
-            return match.Success ? match.Groups[1].Value : null;
+            var match = Regex.Match(rawVersion, "\\d+(?:\\.\\d+)+");
+            return match.Success ? match.Value : null;
+        }
+
+        private static Match MatchPatchVersion(string value)
+        {
+            return Regex.Match(value ?? string.Empty, "\\d+\\.\\d+(?:\\.\\d+)?");
         }
 
         private static bool IsReasonablePatchVersion(string patchVersion)
@@ -147,7 +175,7 @@ namespace HDTplugins.Services
             if (!int.TryParse(parts[0], out major) || !int.TryParse(parts[1], out minor))
                 return false;
 
-            if (major < 30)
+            if (major < 20 && major < 2000)
                 return false;
 
             return minor >= 0;
