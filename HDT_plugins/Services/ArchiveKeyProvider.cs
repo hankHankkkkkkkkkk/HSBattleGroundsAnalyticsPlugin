@@ -36,13 +36,11 @@ namespace HDTplugins.Services
             if (!IsReasonablePatchVersion(detectedPatch))
                 return GetDefaultArchive();
 
-            var mappedDisplayName = mapDisplayName == null ? null : mapDisplayName(detectedPatch);
             var matched = KnownArchives.FirstOrDefault(x => detectedPatch.StartsWith(x.PatchVersion, StringComparison.OrdinalIgnoreCase));
             if (matched != null)
             {
                 var info = Clone(matched);
-                if (!string.IsNullOrWhiteSpace(mappedDisplayName))
-                    info.DisplayName = mappedDisplayName;
+                info.DisplayName = detectedPatch;
                 info.Key = BuildArchiveKeyFromRawVersion(detectedPatch, info.DisplayName);
                 info.IsDetected = true;
                 return info;
@@ -50,8 +48,8 @@ namespace HDTplugins.Services
 
             return new ArchiveVersionInfo
             {
-                Key = BuildArchiveKeyFromRawVersion(detectedPatch, mappedDisplayName),
-                DisplayName = string.IsNullOrWhiteSpace(mappedDisplayName) ? "patch" + detectedPatch : mappedDisplayName,
+                Key = BuildArchiveKeyFromRawVersion(detectedPatch, detectedPatch),
+                DisplayName = detectedPatch,
                 PatchVersion = detectedPatch,
                 IsDetected = true
             };
@@ -90,6 +88,13 @@ namespace HDTplugins.Services
         {
             if (string.IsNullOrWhiteSpace(key))
                 return GetDefaultArchive().DisplayName;
+
+            if (key.StartsWith("version_", StringComparison.OrdinalIgnoreCase))
+            {
+                var suffix = key.Substring("version_".Length).Replace('_', '.').Trim('.');
+                if (!string.IsNullOrWhiteSpace(suffix))
+                    return suffix;
+            }
 
             return key.Replace('_', ' ');
         }

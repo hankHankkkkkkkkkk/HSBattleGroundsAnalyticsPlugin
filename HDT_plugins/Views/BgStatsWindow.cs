@@ -57,6 +57,7 @@ namespace HDTplugins.Views
         private readonly Dictionary<HistoryRange, Button> _rangeButtons = new Dictionary<HistoryRange, Button>();
         private readonly Dictionary<string, FrameworkElement> _historyCards = new Dictionary<string, FrameworkElement>(StringComparer.OrdinalIgnoreCase);
         private readonly Button _versionButton;
+        private readonly Button _accountButton;
         private readonly TextBlock _sectionTitle;
         private readonly Grid _historyToolbar;
         private readonly StackPanel _dateNavigator;
@@ -102,6 +103,7 @@ namespace HDTplugins.Views
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
             _versionButton = new Button();
+            _accountButton = new Button();
             _sectionTitle = new TextBlock();
             _historyToolbar = new Grid();
             _dateNavigator = new StackPanel();
@@ -137,6 +139,7 @@ namespace HDTplugins.Views
         public void Reload()
         {
             RefreshVersionButton();
+            RefreshAccountButton();
             if (_currentSection == SidebarSection.Settings || _currentSection == SidebarSection.Races || _currentSection == SidebarSection.Heroes)
             {
                 RebuildContent();
@@ -188,6 +191,7 @@ namespace HDTplugins.Views
             RefreshRangeButtonTexts();
             RefreshSectionButtons();
             RefreshVersionButton();
+            RefreshAccountButton();
             RefreshHistoryToolbar();
             _sectionTitle.Text = GetSectionTitle();
 
@@ -244,8 +248,22 @@ namespace HDTplugins.Views
                 Padding = new Thickness(16, 18, 16, 18)
             };
 
+            var dock = new DockPanel();
+            border.Child = dock;
+
+            _accountButton.HorizontalContentAlignment = HorizontalAlignment.Left;
+            _accountButton.Padding = new Thickness(10, 12, 10, 12);
+            _accountButton.Margin = new Thickness(0, 22, 0, 0);
+            _accountButton.Background = Brushes.Transparent;
+            _accountButton.BorderBrush = Brushes.Transparent;
+            _accountButton.Cursor = Cursors.Hand;
+            _accountButton.Click += delegate { OpenAccountMenu(); };
+            DockPanel.SetDock(_accountButton, Dock.Bottom);
+            dock.Children.Add(_accountButton);
+
             var stack = new StackPanel();
-            border.Child = stack;
+            DockPanel.SetDock(stack, Dock.Top);
+            dock.Children.Add(stack);
 
             _versionButton.HorizontalContentAlignment = HorizontalAlignment.Left;
             _versionButton.Padding = new Thickness(10, 12, 10, 12);
@@ -1475,13 +1493,56 @@ namespace HDTplugins.Views
             });
             stack.Children.Add(new TextBlock
             {
-                Text = archive != null ? archive.DisplayName : Loc.S("VersionInfo_NoMoreData"),
+                Text = archive != null ? _store.GetArchiveDisplayName(archive) : Loc.S("VersionInfo_NoMoreData"),
                 Foreground = Brushes.White,
                 FontSize = 16,
                 Margin = new Thickness(0, 8, 0, 0),
                 TextWrapping = TextWrapping.Wrap
             });
             _versionButton.Content = stack;
+        }
+
+        private void RefreshAccountButton()
+        {
+            var account = _store.CurrentAccount ?? _store.UnknownAccount;
+            var stack = new StackPanel();
+            stack.Children.Add(new TextBlock
+            {
+                Text = "账号",
+                Foreground = new SolidColorBrush(Color.FromRgb(247, 245, 241)),
+                FontSize = 15,
+                FontWeight = FontWeights.SemiBold
+            });
+            stack.Children.Add(new TextBlock
+            {
+                Text = account.BattleTagName,
+                Foreground = Brushes.White,
+                FontSize = 18,
+                FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(0, 3, 0, 0),
+                TextWrapping = TextWrapping.Wrap
+            });
+            if (!string.IsNullOrWhiteSpace(account.BattleTagCode))
+            {
+                stack.Children.Add(new TextBlock
+                {
+                    Text = account.BattleTagCode,
+                    Foreground = Brushes.White,
+                    FontSize = 14,
+                    FontWeight = FontWeights.SemiBold,
+                    Margin = new Thickness(0, 1, 0, 0),
+                    TextWrapping = TextWrapping.Wrap
+                });
+            }
+            stack.Children.Add(new TextBlock
+            {
+                Text = account.Subtitle,
+                Foreground = new SolidColorBrush(Color.FromRgb(246, 244, 240)),
+                FontSize = 12,
+                Margin = new Thickness(0, 4, 0, 0),
+                TextWrapping = TextWrapping.Wrap
+            });
+            _accountButton.Content = stack;
         }
 
         private void OpenVersionMenu()
@@ -1498,7 +1559,7 @@ namespace HDTplugins.Views
                 {
                     var item = new MenuItem
                     {
-                        Header = archive.DisplayName,
+                        Header = _store.GetArchiveDisplayName(archive),
                         IsCheckable = true,
                         IsChecked = string.Equals(archive.Key, _store.CurrentArchive?.Key, StringComparison.OrdinalIgnoreCase)
                     };
@@ -1516,6 +1577,44 @@ namespace HDTplugins.Views
 
             _versionButton.ContextMenu = menu;
             menu.PlacementTarget = _versionButton;
+            menu.IsOpen = true;
+        }
+
+        private void OpenAccountMenu()
+        {
+            var menu = new ContextMenu();
+            var accounts = _store.GetAvailableAccounts();
+            if (accounts.Count == 0)
+            {
+                menu.Items.Add(new MenuItem { Header = "暂无账号数据", IsEnabled = false });
+            }
+            else
+            {
+                foreach (var account in accounts)
+                {
+                    var item = new MenuItem
+                    {
+                        Header = account.MenuDisplay,
+                        IsCheckable = true,
+                        IsChecked = string.Equals(account.Key, _store.CurrentAccountKey, StringComparison.OrdinalIgnoreCase)
+                    };
+                    item.Click += delegate
+                    {
+                        _store.SetCurrentAccountByKey(account.Key);
+                        _settingsService.Settings.SelectedAccountKey = _store.CurrentAccountKey;
+                        _settingsService.Save();
+                        _selectedMatchId = null;
+                        RefreshAccountButton();
+                        RefreshVersionButton();
+                        RefreshHistoryToolbar();
+                        RebuildContent();
+                    };
+                    menu.Items.Add(item);
+                }
+            }
+
+            _accountButton.ContextMenu = menu;
+            menu.PlacementTarget = _accountButton;
             menu.IsOpen = true;
         }
 
@@ -1659,18 +1758,18 @@ namespace HDTplugins.Views
         private UIElement BuildHeroSection(BgSnapshot snapshot)
         {
             var section = CreateSectionContainer();
-            var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            section.Child = grid;
+            var stack = new StackPanel { Orientation = Orientation.Vertical };
+            section.Child = stack;
 
-            grid.Children.Add(CreateInfoText(Loc.F("MatchDetail_SelectedHeroFormat", GameTextService.GetCardName(snapshot.HeroCardId, snapshot.HeroName))));
-            if (!string.IsNullOrWhiteSpace(snapshot.HeroPowerCardId) && !string.Equals(snapshot.HeroPowerCardId, snapshot.InitialHeroPowerCardId, StringComparison.OrdinalIgnoreCase))
-            {
-                var finalPower = CreateInfoText(Loc.F("MatchDetail_FinalHeroPowerFormat", GameTextService.GetCardName(snapshot.HeroPowerCardId, snapshot.HeroPowerCardId)));
-                Grid.SetColumn(finalPower, 1);
-                grid.Children.Add(finalPower);
-            }
+            stack.Children.Add(CreateInfoText(Loc.F("MatchDetail_SelectedHeroFormat", GameTextService.GetCardName(snapshot.HeroCardId, snapshot.HeroName))));
+            var initialHeroPowers = (snapshot.InitialHeroPowerCardIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).ToArray();
+            var combatHeroPowers = (snapshot.HeroPowerCardIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).ToArray();
+
+            for (var i = 0; i < initialHeroPowers.Length; i++)
+                stack.Children.Add(CreateInfoText(Loc.F("MatchDetail_HeroPowerSlotFormat", Loc.S("MatchDetail_InitialHeroPowerLabel"), i + 1, GameTextService.GetCardName(initialHeroPowers[i], initialHeroPowers[i]))));
+
+            for (var i = 0; i < combatHeroPowers.Length; i++)
+                stack.Children.Add(CreateInfoText(Loc.F("MatchDetail_HeroPowerSlotFormat", Loc.S("MatchDetail_FinalHeroPowerLabel"), i + 1, GameTextService.GetCardName(combatHeroPowers[i], combatHeroPowers[i]))));
             return section;
         }
 

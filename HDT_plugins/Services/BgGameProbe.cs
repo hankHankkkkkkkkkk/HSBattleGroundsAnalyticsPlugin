@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
+using System.Threading.Tasks;
 
 using HdtLog = Hearthstone_Deck_Tracker.Utility.Logging.Log;
 
@@ -32,9 +33,15 @@ namespace HDTplugins.Services
         private int _lastObservedRawTurn;
         private Step _lastObservedStep = Step.INVALID;
         private bool _combatSnapshotCapturedThisFight;
+        private bool _needResolveAccountContext;
+        private long _nextAccountResolveTs;
+        private long _nextAccountResolveLogTs;
+        private string[] _currentHeroPowerCardIds = Array.Empty<string>();
 
         private const int RatingResolveTimeoutMs = 45_000;
         private const int RatingPollMs = 500;
+        private const int AccountResolveRetryMs = 3000;
+        private const int AccountResolveLogThrottleMs = 10000;
 
         private static long MsToTicks(int ms)
             => (long)(Stopwatch.Frequency * (ms / 1000.0));
@@ -42,7 +49,9 @@ namespace HDTplugins.Services
         public bool IsBattlegrounds => _bgDetected;
         public string HeroCardId { get; private set; }
         public string HeroSkinCardId { get; private set; }
+        public string[] InitialHeroPowerCardIds { get; private set; } = Array.Empty<string>();
         public string InitialHeroPowerCardId { get; private set; }
+        public string[] HeroPowerCardIds { get; private set; } = Array.Empty<string>();
         public string HeroPowerCardId { get; private set; }
         public int[] OfferedHeroDbfIds { get; private set; } = Array.Empty<int>();
         public string[] OfferedHeroCardIds { get; private set; } = Array.Empty<string>();
@@ -51,6 +60,13 @@ namespace HDTplugins.Services
         public bool HasResolvedPlacement => Placement > 0;
         public int RatingBefore { get; private set; } = -1;
         public int RatingAfter { get; private set; } = -1;
+        public string AccountHi { get; private set; }
+        public string AccountLo { get; private set; }
+        public string BattleTag { get; private set; }
+        public string ServerInfo { get; private set; }
+        public string RegionCode { get; private set; }
+        public string RegionName { get; private set; }
+        public bool HasAttemptedAccountResolution { get; private set; }
         public string[] AvailableRaceNames { get; private set; } = Array.Empty<string>();
         public int AnomalyDbfId { get; private set; }
         public string AnomalyCardId { get; private set; }
@@ -58,13 +74,21 @@ namespace HDTplugins.Services
         public List<BgTavernUpgradePoint> TavernUpgradeTimeline { get; private set; } = new List<BgTavernUpgradePoint>();
         public bool HasResolvedRatingAfter => RatingAfter > 0 && !_needResolveRatingAfter;
 
+        public void RefreshRuntimeAccountContext()
+        {
+            TryResolveAccountContext();
+        }
+
         public void OnGameStart()
         {
             _bgDetected = false;
             HeroCardId = null;
             HeroSkinCardId = null;
+            InitialHeroPowerCardIds = Array.Empty<string>();
             InitialHeroPowerCardId = null;
+            HeroPowerCardIds = Array.Empty<string>();
             HeroPowerCardId = null;
+            _currentHeroPowerCardIds = Array.Empty<string>();
             Placement = 0;
             OfferedHeroDbfIds = Array.Empty<int>();
             OfferedHeroCardIds = Array.Empty<string>();
@@ -73,6 +97,16 @@ namespace HDTplugins.Services
             _needResolveOfferedHeroes = true;
             RatingBefore = -1;
             RatingAfter = -1;
+            AccountHi = null;
+            AccountLo = null;
+            BattleTag = null;
+            ServerInfo = null;
+            RegionCode = null;
+            RegionName = null;
+            HasAttemptedAccountResolution = false;
+            _needResolveAccountContext = true;
+            _nextAccountResolveTs = 0;
+            _nextAccountResolveLogTs = 0;
             _needResolveRatingAfter = false;
             _nextRatingPollTs = 0;
             AvailableRaceNames = Array.Empty<string>();
@@ -91,12 +125,28 @@ namespace HDTplugins.Services
             if (!_bgDetected)
                 return;
 
+            CaptureFinalHeroState();
             TryCachePlacement();
             TryUpdateTurnScopedSnapshots();
             _needResolvePlacement = true;
             _needResolveRatingAfter = true;
             _ratingResolveStartTs = Stopwatch.GetTimestamp();
             _nextRatingPollTs = 0;
+        }
+
+        public void CaptureFinalHeroState()
+        {
+            try
+            {
+                TryResolveHeroAndHeroPower();
+                TryRefreshHeroPower();
+                TryCacheFinalBoard();
+                HdtLog.Info($"[BGStats][HeroPower] finalize snapshot hero={HeroCardId ?? "null"} initial=[{string.Join(", ", InitialHeroPowerCardIds)}] combat=[{string.Join(", ", HeroPowerCardIds)}] current=[{string.Join(", ", _currentHeroPowerCardIds)}] boardCount={FinalBoard?.Count ?? 0}");
+            }
+            catch (Exception ex)
+            {
+                HdtLog.Warn("[BGStats][HeroPower] finalize snapshot failed: " + ex.Message);
+            }
         }
 
         public void StopFinalizePolling()
@@ -130,13 +180,13 @@ namespace HDTplugins.Services
             TryCacheAnomaly();
             TryUpdateTurnScopedSnapshots();
             TryCapturePreCombatSnapshot();
+            if (_needResolveAccountContext)
+                TryResolveAccountContext();
 
             if (_needResolveOfferedHeroes)
                 TryResolveOfferedHeroes(nowTs);
             if (_needResolveHero)
                 TryResolveHeroAndHeroPower();
-            else
-                TryRefreshHeroPower();
             if (_needResolvePlacement)
                 TryResolvePlacement();
             if (_needResolveRatingAfter)
@@ -165,6 +215,73 @@ namespace HDTplugins.Services
             catch
             {
                 return false;
+            }
+        }
+
+        private void TryResolveAccountContext()
+        {
+            var nowTs = Stopwatch.GetTimestamp();
+            if (nowTs < _nextAccountResolveTs)
+                return;
+
+            HasAttemptedAccountResolution = true;
+
+            try
+            {
+                var collectionAccount = GetAccountContextFromCollection();
+                if (collectionAccount != null)
+                {
+                    AccountHi = GetNumericPropertyAsString(collectionAccount, "AccountHi") ?? AccountHi;
+                    AccountLo = GetNumericPropertyAsString(collectionAccount, "AccountLo") ?? AccountLo;
+                    var collectionBattleTag = GetPropertyValueStatic(collectionAccount, "BattleTag");
+                    BattleTag = GetBattleTagText(collectionBattleTag) ?? BattleTag;
+                    TryPopulateRegionFromAccountHi(AccountHi);
+                    if (string.IsNullOrWhiteSpace(BattleTag) && collectionBattleTag != null && nowTs >= _nextAccountResolveLogTs)
+                    {
+                        _nextAccountResolveLogTs = nowTs + MsToTicks(AccountResolveLogThrottleMs);
+                        HdtLog.Info("[BGStats][Account] 收藏数据已返回 BattleTag 原始值，但解析为空: " + collectionBattleTag);
+                    }
+                }
+
+                var accountId = GetAccountIdFromGameMetaData() ?? GetAccountIdFromReflectionClient();
+                if (accountId != null)
+                {
+                    AccountHi = GetNumericPropertyAsString(accountId, "Hi");
+                    AccountLo = GetNumericPropertyAsString(accountId, "Lo");
+
+                    if (TryGetAccountRegionCode(accountId, out var regionCode))
+                    {
+                        RegionCode = regionCode.ToString();
+                        RegionName = MapRegionName(regionCode);
+                    }
+                }
+
+                ServerInfo = NormalizeAccountValue(GetServerInfoFromGameMetaData()) ?? NormalizeAccountValue(GetReflectionClientValue("GetServerInfo"));
+                BattleTag = BattleTag ?? GetBattleTagText(GetReflectionClientValue("GetBattleTag"));
+
+                var hasAccount = !string.IsNullOrWhiteSpace(AccountHi)
+                    || !string.IsNullOrWhiteSpace(AccountLo)
+                    || !string.IsNullOrWhiteSpace(BattleTag)
+                    || !string.IsNullOrWhiteSpace(ServerInfo);
+
+                _needResolveAccountContext = !hasAccount;
+                _nextAccountResolveTs = hasAccount ? nowTs + MsToTicks(AccountResolveLogThrottleMs) : nowTs + MsToTicks(AccountResolveRetryMs);
+
+                if (hasAccount && nowTs >= _nextAccountResolveLogTs)
+                {
+                    _nextAccountResolveLogTs = nowTs + MsToTicks(AccountResolveLogThrottleMs);
+                    HdtLog.Info($"[BGStats][Account] hi={AccountHi ?? "null"} lo={AccountLo ?? "null"} region={RegionName ?? RegionCode ?? "null"} server={ServerInfo ?? "null"} tag={BattleTag ?? "null"}");
+                }
+            }
+            catch (Exception ex)
+            {
+                _needResolveAccountContext = true;
+                _nextAccountResolveTs = nowTs + MsToTicks(AccountResolveRetryMs);
+                if (nowTs >= _nextAccountResolveLogTs)
+                {
+                    _nextAccountResolveLogTs = nowTs + MsToTicks(AccountResolveLogThrottleMs);
+                    HdtLog.Warn("[BGStats][Account] 读取账号上下文失败: " + ex.Message);
+                }
             }
         }
 
@@ -239,14 +356,14 @@ namespace HDTplugins.Services
                 if (!string.IsNullOrEmpty(HeroCardId))
                 {
                     _needResolveHero = false;
-                    HdtLog.Info($"[BGStats] å·²è§£æžè‹±é›„ï¼šHero={HeroCardId}, HeroPower={HeroPowerCardId ?? "null"}");
+                    HdtLog.Info($"[BGStats] Resolved hero: Hero={HeroCardId}, InitialHeroPowers=[{string.Join(", ", InitialHeroPowerCardIds)}], CombatHeroPowers=[{string.Join(", ", HeroPowerCardIds)}], Current=[{string.Join(", ", _currentHeroPowerCardIds)}]");
                     if (RatingBefore <= 0)
                         RatingBefore = TryGetCurrentBattlegroundsRating() ?? -1;
                 }
             }
             catch (Exception ex)
             {
-                HdtLog.Error("[BGStats] TryResolveHeroAndHeroPower å¤±è´¥: " + ex.Message);
+                HdtLog.Error("[BGStats] TryResolveHeroAndHeroPower failed: " + ex.Message);
             }
         }
 
@@ -254,68 +371,151 @@ namespace HDTplugins.Services
         {
             try
             {
-                var previousHeroPower = HeroPowerCardId;
-                var hpCardId = ResolveHeroPowerCardId(out var source);
-                if (string.IsNullOrEmpty(hpCardId))
+                var currentHeroPowerCardIds = ResolveHeroPowerCardIds(out var source);
+                if (currentHeroPowerCardIds.Length == 0)
                 {
-                    HdtLog.Info("[BGStats][HeroPower] æœ¬æ¬¡æœªè¯»å–åˆ°è‹±é›„æŠ€èƒ½");
+                    HdtLog.Info("[BGStats][HeroPower] hero power not resolved in this poll");
                     return;
                 }
 
-                HeroPowerCardId = hpCardId;
-                if (string.IsNullOrEmpty(InitialHeroPowerCardId))
+                var previousCurrentHeroPowers = _currentHeroPowerCardIds;
+                _currentHeroPowerCardIds = currentHeroPowerCardIds;
+
+                if (InitialHeroPowerCardIds.Length == 0)
                 {
-                    InitialHeroPowerCardId = hpCardId;
-                    HdtLog.Info($"[BGStats][HeroPower] è®°å½•åˆå§‹è‹±é›„æŠ€èƒ½: {InitialHeroPowerCardId} (source={source})");
+                    InitialHeroPowerCardIds = currentHeroPowerCardIds;
+                    InitialHeroPowerCardId = InitialHeroPowerCardIds.ElementAtOrDefault(0);
+                    HdtLog.Info($"[BGStats][HeroPower] initial hero powers: [{string.Join(", ", InitialHeroPowerCardIds)}] (source={source})");
                 }
 
-                if (!string.Equals(previousHeroPower, HeroPowerCardId, StringComparison.OrdinalIgnoreCase))
-                    HdtLog.Info($"[BGStats][HeroPower] è‹±é›„æŠ€èƒ½æ›´æ–°: {previousHeroPower ?? "null"} -> {HeroPowerCardId} (source={source})");
+                if (!SameCardIdSet(previousCurrentHeroPowers, _currentHeroPowerCardIds))
+                    HdtLog.Info($"[BGStats][HeroPower] current hero powers: [{string.Join(", ", previousCurrentHeroPowers)}] -> [{string.Join(", ", _currentHeroPowerCardIds)}] (source={source})");
             }
             catch (Exception ex)
             {
-                HdtLog.Error("[BGStats] TryRefreshHeroPower å¤±è´¥: " + ex.Message);
+                HdtLog.Error("[BGStats] TryRefreshHeroPower failed: " + ex.Message);
             }
         }
 
-        private string ResolveHeroPowerCardId(out string source)
-        {
-            var fromPlayerHeroPower = GetHeroPowerFromPlayerView();
-            if (!string.IsNullOrEmpty(fromPlayerHeroPower))
-            {
-                source = "Player.HeroPower";
-                return fromPlayerHeroPower;
-            }
-
-            var fromPlayerEntity = GetHeroPowerFromPlayerEntity();
-            if (!string.IsNullOrEmpty(fromPlayerEntity))
-            {
-                source = "PlayerEntity.HERO_POWER";
-                return fromPlayerEntity;
-            }
-
-            var fromHeroEntity = GetHeroPowerFromHeroEntity();
-            if (!string.IsNullOrEmpty(fromHeroEntity))
-            {
-                source = "HeroEntity.HERO_POWER";
-                return fromHeroEntity;
-            }
-
-            source = "unresolved";
-            return null;
-        }
-
-        private string GetHeroPowerFromPlayerView()
+        private void TryRecordCombatHeroPowers()
         {
             try
             {
-                var heroPower = GetPropertyValue(Core.Game.Player, "HeroPower");
-                var heroPowerCardId = GetStringProperty(heroPower, "CardId");
-                if (!string.IsNullOrEmpty(heroPowerCardId))
-                    return heroPowerCardId;
+                var currentHeroPowerCardIds = ResolveHeroPowerCardIds(out var source);
+                if (currentHeroPowerCardIds.Length == 0)
+                {
+                    HdtLog.Info("[BGStats][HeroPower] combat hero powers not resolved in this poll");
+                    return;
+                }
 
-                var card = GetPropertyValue(heroPower, "Card");
-                return GetStringProperty(card, "Id");
+                var previousCombatHeroPowers = HeroPowerCardIds;
+                HeroPowerCardIds = currentHeroPowerCardIds;
+                HeroPowerCardId = HeroPowerCardIds.ElementAtOrDefault(0);
+                if (!SameCardIdSet(previousCombatHeroPowers, HeroPowerCardIds))
+                    HdtLog.Info($"[BGStats][HeroPower] combat hero powers updated: [{string.Join(", ", previousCombatHeroPowers)}] -> [{string.Join(", ", HeroPowerCardIds)}] (source={source})");
+            }
+            catch (Exception ex)
+            {
+                HdtLog.Error("[BGStats] TryRecordCombatHeroPowers failed: " + ex.Message);
+            }
+        }
+
+        private string[] ResolveHeroPowerCardIds(out string source)
+        {
+            var results = new List<string>();
+            var sources = new List<string>();
+
+            AddHeroPowerCandidates(results, sources, GetHeroPowersFromPlayerView(), "PlayerView");
+            AddHeroPowerCandidates(results, sources, GetHeroPowersFromPlayerEntity(), "PlayerEntity");
+            AddHeroPowerCandidates(results, sources, GetHeroPowersFromHeroEntity(), "HeroEntity");
+
+            var normalized = results
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(2)
+                .ToArray();
+
+            source = sources.Count == 0 ? "unresolved" : string.Join("+", sources.Distinct(StringComparer.OrdinalIgnoreCase));
+            return normalized;
+        }
+
+        private IEnumerable<string> GetHeroPowersFromPlayerView()
+        {
+            try
+            {
+                var results = new List<string>();
+                var heroPowers = GetPropertyValue(Core.Game.Player, "HeroPowers") as System.Collections.IEnumerable;
+                if (heroPowers != null)
+                {
+                    foreach (var heroPower in heroPowers)
+                        AddHeroPowerCandidate(results, heroPower);
+                }
+
+                AddHeroPowerCandidate(results, GetPropertyValue(Core.Game.Player, "HeroPower"));
+                return results;
+            }
+            catch
+            {
+                return Array.Empty<string>();
+            }
+        }
+
+        private static string NormalizeAccountValue(object value)
+        {
+            var text = value?.ToString();
+            return string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+        }
+
+        private static string GetBattleTagText(object battleTag)
+        {
+            if (battleTag == null)
+                return null;
+
+            try
+            {
+                var type = battleTag.GetType();
+                var name = type.GetProperty("Name", BindingFlags.Public | BindingFlags.Instance)?.GetValue(battleTag, null)?.ToString();
+                var number = type.GetProperty("Number", BindingFlags.Public | BindingFlags.Instance)?.GetValue(battleTag, null)?.ToString();
+                if (!string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(number))
+                    return name.Trim() + "#" + number.Trim();
+            }
+            catch
+            {
+            }
+
+            return NormalizeAccountValue(battleTag);
+        }
+
+        private void TryPopulateRegionFromAccountHi(string accountHi)
+        {
+            if (string.IsNullOrWhiteSpace(accountHi))
+                return;
+            if (!string.IsNullOrWhiteSpace(RegionName) && !string.IsNullOrWhiteSpace(RegionCode))
+                return;
+
+            try
+            {
+                if (!ulong.TryParse(accountHi, out var hiValue))
+                    return;
+
+                var regionCode = (int)((hiValue >> 32) & 0xFF);
+                if (regionCode <= 0)
+                    return;
+
+                RegionCode = regionCode.ToString();
+                RegionName = MapRegionName(regionCode);
+            }
+            catch
+            {
+            }
+        }
+
+        private static object GetAccountIdFromGameMetaData()
+        {
+            try
+            {
+                var metaData = Core.Game?.MetaData;
+                return metaData?.GetType().GetProperty("AccountId", BindingFlags.Public | BindingFlags.Instance)?.GetValue(metaData, null);
             }
             catch
             {
@@ -323,43 +523,225 @@ namespace HDTplugins.Services
             }
         }
 
-        private string GetHeroPowerFromPlayerEntity()
+        private static object GetServerInfoFromGameMetaData()
         {
             try
             {
+                var metaData = Core.Game?.MetaData;
+                var type = metaData?.GetType();
+                return type?.GetProperty("ServerInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(metaData, null)
+                    ?? type?.GetField("ServerInfo", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(metaData);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static object GetAccountContextFromCollection()
+        {
+            try
+            {
+                var asm = typeof(Core).Assembly;
+                var helpersType = asm.GetType("Hearthstone_Deck_Tracker.Hearthstone.CollectionHelpers");
+                var helper = helpersType?.GetProperty("Hearthstone", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null, null);
+                if (helper == null)
+                    return null;
+
+                var collection = TryGetCollectionObject(helper);
+                if (HasBattleTag(collection))
+                    return collection;
+
+                TryUpdateCollection(helper);
+
+                collection = TryGetCollectionObject(helper);
+                if (HasBattleTag(collection))
+                    return collection;
+
+                return collection;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static object TryGetCollectionObject(object helper)
+        {
+            try
+            {
+                var tryGetCollection = helper.GetType().GetMethod("TryGetCollection", BindingFlags.Public | BindingFlags.Instance);
+                if (tryGetCollection != null)
+                {
+                    var args = new object[] { null };
+                    var ok = tryGetCollection.Invoke(helper, args);
+                    if (ok is bool hasCollection && hasCollection && args[0] != null)
+                        return args[0];
+                }
+
+                var getCollection = helper.GetType().GetMethod("GetCollection", BindingFlags.Public | BindingFlags.Instance);
+                return getCollection?.Invoke(helper, null);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static bool HasBattleTag(object collection)
+        {
+            var value = GetPropertyValueStatic(collection, "BattleTag");
+            return !string.IsNullOrWhiteSpace(NormalizeAccountValue(value));
+        }
+
+        private static void TryUpdateCollection(object helper)
+        {
+            try
+            {
+                var updateMethod = helper.GetType().GetMethod("UpdateCollection", new System.Type[] { });
+                var task = updateMethod?.Invoke(helper, null) as Task;
+                task?.Wait(1000);
+            }
+            catch
+            {
+            }
+        }
+
+        private static object GetAccountIdFromReflectionClient()
+        {
+            return GetReflectionClientValue("GetAccountId");
+        }
+
+        private static object GetReflectionClientValue(string methodName)
+        {
+            try
+            {
+                var clientType = typeof(Core).Assembly.GetType("HearthMirror.Reflection.Client");
+                return clientType?.GetMethod(methodName, BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static object GetPropertyValueStatic(object target, string propertyName)
+        {
+            try
+            {
+                return target?.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance)?.GetValue(target, null);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string GetStringPropertyStatic(object target, string propertyName)
+        {
+            return GetPropertyValueStatic(target, propertyName)?.ToString() ?? string.Empty;
+        }
+
+        private static string GetNumericPropertyAsString(object instance, string propertyName)
+        {
+            try
+            {
+                var value = instance?.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance)?.GetValue(instance, null);
+                if (value == null)
+                    return null;
+                return Convert.ToUInt64(value).ToString();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static bool TryGetAccountRegionCode(object accountId, out int regionCode)
+        {
+            regionCode = 0;
+            try
+            {
+                var hi = GetUInt64PropertyValue(accountId, "Hi");
+                if (!hi.HasValue)
+                    return false;
+
+                regionCode = (int)((hi.Value >> 32) & 0xFF);
+                return regionCode > 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static ulong? GetUInt64PropertyValue(object instance, string propertyName)
+        {
+            try
+            {
+                var value = instance?.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance)?.GetValue(instance, null);
+                if (value == null)
+                    return null;
+                return Convert.ToUInt64(value);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string MapRegionName(int regionCode)
+        {
+            switch (regionCode)
+            {
+                case 1:
+                    return "US";
+                case 2:
+                    return "EU";
+                case 3:
+                    return "KR";
+                case 5:
+                    return "CN";
+                default:
+                    return "Region-" + regionCode;
+            }
+        }
+
+        private IEnumerable<string> GetHeroPowersFromPlayerEntity()
+        {
+            try
+            {
+                var results = new List<string>();
                 var playerEntity = Core.Game.PlayerEntity;
                 if (playerEntity == null)
-                    return null;
+                    return results;
 
                 var heroPowerEntityId = playerEntity.GetTag(GameTag.HERO_POWER);
                 if (heroPowerEntityId <= 0 || !Core.Game.Entities.ContainsKey(heroPowerEntityId))
-                    return null;
+                    return results;
 
                 var heroPowerEntity = Core.Game.Entities[heroPowerEntityId];
-                var hpCardId = GetStringProperty(heroPowerEntity, "CardId");
-                if (!string.IsNullOrEmpty(hpCardId))
-                    return hpCardId;
-
-                var card = GetPropertyValue(heroPowerEntity, "Card");
-                return GetStringProperty(card, "Id");
+                AddHeroPowerCandidate(results, heroPowerEntity);
+                return results;
             }
             catch
             {
-                return null;
+                return Array.Empty<string>();
             }
         }
 
-        private string GetHeroPowerFromHeroEntity()
+        private IEnumerable<string> GetHeroPowersFromHeroEntity()
         {
             try
             {
+                var results = new List<string>();
                 var playerEntity = Core.Game.PlayerEntity;
                 if (playerEntity == null)
-                    return null;
+                    return results;
 
                 var heroEntityId = playerEntity.GetTag(GameTag.HERO_ENTITY);
                 if (heroEntityId <= 0 || !Core.Game.Entities.ContainsKey(heroEntityId))
-                    return null;
+                    return results;
 
                 var heroEntity = Core.Game.Entities[heroEntityId];
                 var heroPowerEntityId = 0;
@@ -370,19 +752,15 @@ namespace HDTplugins.Services
                 catch { }
 
                 if (heroPowerEntityId <= 0 || !Core.Game.Entities.ContainsKey(heroPowerEntityId))
-                    return null;
+                    return results;
 
                 var heroPowerEntity = Core.Game.Entities[heroPowerEntityId];
-                var hpCardId = GetStringProperty(heroPowerEntity, "CardId");
-                if (!string.IsNullOrEmpty(hpCardId))
-                    return hpCardId;
-
-                var card = GetPropertyValue(heroPowerEntity, "Card");
-                return GetStringProperty(card, "Id");
+                AddHeroPowerCandidate(results, heroPowerEntity);
+                return results;
             }
             catch
             {
-                return null;
+                return Array.Empty<string>();
             }
         }
 
@@ -527,9 +905,13 @@ namespace HDTplugins.Services
         private void TryCachePreCombatSnapshot()
         {
             TryRefreshHeroPower();
+            TryRecordCombatHeroPowers();
             TryCacheFinalBoard();
-            _combatSnapshotCapturedThisFight = FinalBoard.Count > 0 || !string.IsNullOrWhiteSpace(HeroPowerCardId);
-            HdtLog.Info($"[BGStats] å·²åœ¨è¿›å…¥æˆ˜æ–—å‰è®°å½•å½“å‰é˜µå®¹ä¸Žè‹±é›„æŠ€èƒ½ï¼Œstep={_lastObservedStep}, boardCount={FinalBoard.Count}, heroPower={HeroPowerCardId ?? "null"}");
+            _combatSnapshotCapturedThisFight = FinalBoard.Count > 0
+                || InitialHeroPowerCardIds.Length > 0
+                || HeroPowerCardIds.Length > 0
+                || _currentHeroPowerCardIds.Length > 0;
+            HdtLog.Info($"[BGStats] captured pre-combat snapshot: step={_lastObservedStep}, boardCount={FinalBoard.Count}, initial=[{string.Join(", ", InitialHeroPowerCardIds)}], combat=[{string.Join(", ", HeroPowerCardIds)}], current=[{string.Join(", ", _currentHeroPowerCardIds)}]");
         }
 
         private void TryCacheFinalBoard()
@@ -756,6 +1138,50 @@ namespace HDTplugins.Services
 
             int parsed;
             return value != null && int.TryParse(value.ToString(), out parsed) ? parsed : 0;
+        }
+
+        private static void AddHeroPowerCandidates(ICollection<string> results, ICollection<string> sources, IEnumerable<string> cardIds, string source)
+        {
+            if (results == null || cardIds == null)
+                return;
+
+            var before = results.Count;
+            foreach (var cardId in cardIds)
+                AddHeroPowerCandidate(results, cardId);
+
+            if (sources != null && results.Count > before && !string.IsNullOrWhiteSpace(source))
+                sources.Add(source);
+        }
+
+        private static void AddHeroPowerCandidate(ICollection<string> results, object heroPower)
+        {
+            if (results == null || heroPower == null)
+                return;
+
+            var cardId = GetStringPropertyStatic(heroPower, "CardId");
+            if (string.IsNullOrWhiteSpace(cardId))
+            {
+                var card = GetPropertyValueStatic(heroPower, "Card");
+                cardId = GetStringPropertyStatic(card, "Id");
+            }
+
+            AddHeroPowerCandidate(results, cardId);
+        }
+
+        private static void AddHeroPowerCandidate(ICollection<string> results, string cardId)
+        {
+            if (results == null || string.IsNullOrWhiteSpace(cardId))
+                return;
+            if (results.Contains(cardId))
+                return;
+            results.Add(cardId.Trim());
+        }
+
+        private static bool SameCardIdSet(string[] left, string[] right)
+        {
+            return SameArray(
+                (left ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray(),
+                (right ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray());
         }
         private void TryResolveRatingAfter(long nowTs)
         {

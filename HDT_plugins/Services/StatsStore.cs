@@ -14,6 +14,7 @@ namespace HDTplugins.Services
 {
     public class StatsStore
     {
+        private const string UnknownAccountKey = "unknown-account";
         private readonly JavaScriptSerializer _serializer = new JavaScriptSerializer();
         private readonly HeroStatsAggregationService _heroStatsService = new HeroStatsAggregationService();
         private readonly LineupTagService _lineupTagService = new LineupTagService();
@@ -21,20 +22,26 @@ namespace HDTplugins.Services
 
         private string _dataDir;
         private string _archivesDir;
+        private string _currentArchiveDir;
         private string _finalFilePath;
         private string _pendingFilePath;
         private string _tablesDir;
         private ArchiveVersionInfo _activeMatchArchive;
+        private string _activeArchiveDir;
         private string _activeFinalFilePath;
         private string _activePendingFilePath;
+        private AccountRecord _activeMatchAccount;
 
         public string CurrentMatchId { get; private set; }
         public string CurrentMatchTimestampUtc { get; private set; }
         public bool PendingWritten { get; private set; }
         public ArchiveVersionInfo CurrentArchive { get; private set; }
+        public AccountRecord CurrentAccount { get; private set; }
+        public string CurrentAccountKey => CurrentAccount?.Key;
         public string FinalFilePath => _finalFilePath;
         public string TagConfigPath => _lineupTagService.ConfigPath;
         public string TablesDirectoryPath => _tablesDir;
+        public AccountRecord UnknownAccount => CreateUnknownAccount();
 
 
         public void Initialize()
@@ -77,6 +84,123 @@ namespace HDTplugins.Services
         public IReadOnlyList<string> GetAvailableTags()
         {
             return _lineupTagService.GetAvailableTags();
+        }
+
+        public AccountRecord InitializeSelectedAccount(string preferredAccountKey)
+        {
+            var resolved = ResolveExistingAccount(preferredAccountKey) ?? GetMostRecentAccount() ?? GetAvailableAccounts().FirstOrDefault() ?? CreateUnknownAccount();
+            SetCurrentAccountInternal(resolved);
+            return CurrentAccount;
+        }
+
+        public AccountRecord ApplyCurrentAccountFromGame(AccountRecord account)
+        {
+            var normalized = NormalizeAccountRecord(account);
+            if (_activeMatchAccount == null)
+                SetActiveMatchAccount(normalized);
+
+            var currentKey = CurrentAccount?.Key ?? string.Empty;
+            var normalizedKey = normalized?.Key ?? string.Empty;
+            var shouldSwitch = CurrentAccount == null
+                || CurrentAccount.IsUnknown
+                || (!normalized.IsUnknown && !string.Equals(currentKey, normalizedKey, StringComparison.OrdinalIgnoreCase))
+                || ShouldRefreshCurrentAccountMetadata(normalized);
+
+            if (shouldSwitch)
+                SetCurrentAccountInternal(normalized);
+
+            return CurrentAccount;
+        }
+
+        public AccountRecord SetCurrentAccountByKey(string accountKey)
+        {
+            var resolved = ResolveExistingAccount(accountKey) ?? CreateUnknownAccount();
+            SetCurrentAccountInternal(resolved);
+            return CurrentAccount;
+        }
+
+        public IReadOnlyList<AccountRecord> GetAvailableAccounts()
+        {
+            var accounts = new Dictionary<string, AccountRecord>(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(_archivesDir) || !Directory.Exists(_archivesDir))
+                return new[] { CreateUnknownAccount() };
+
+            foreach (var archiveDir in Directory.GetDirectories(_archivesDir))
+            {
+                EnsureLegacyArchiveMigratedToUnknown(archiveDir);
+
+                var accountsDir = Path.Combine(archiveDir, "accounts");
+                if (!Directory.Exists(accountsDir))
+                    continue;
+
+                foreach (var accountDir in Directory.GetDirectories(accountsDir))
+                {
+                    var finalFilePath = Path.Combine(accountDir, "bg_stats.jsonl");
+                    if (!File.Exists(finalFilePath) || new FileInfo(finalFilePath).Length <= 0)
+                        continue;
+
+                    var key = Path.GetFileName(accountDir);
+                    var record = TryReadAccountRecord(finalFilePath, key) ?? CreateUnknownAccount();
+                    record.MatchCount += CountSnapshots(finalFilePath);
+                    MergeAccountRecord(accounts, record);
+                }
+            }
+
+            if (accounts.Count == 0)
+                MergeAccountRecord(accounts, CreateUnknownAccount());
+
+            return accounts.Values
+                .OrderByDescending(x => string.Equals(x.Key, CurrentAccount?.Key, StringComparison.OrdinalIgnoreCase))
+                .ThenBy(x => x.IsUnknown ? 1 : 0)
+                .ThenByDescending(x => x.MatchCount)
+                .ThenBy(x => x.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
+        }
+
+        public AccountRecord GetMostRecentAccount()
+        {
+            AccountRecord bestAccount = null;
+            DateTime bestTimestamp = default(DateTime);
+
+            if (string.IsNullOrWhiteSpace(_archivesDir) || !Directory.Exists(_archivesDir))
+                return null;
+
+            foreach (var archiveDir in Directory.GetDirectories(_archivesDir))
+            {
+                EnsureLegacyArchiveMigratedToUnknown(archiveDir);
+                var accountsDir = Path.Combine(archiveDir, "accounts");
+                if (!Directory.Exists(accountsDir))
+                    continue;
+
+                foreach (var accountDir in Directory.GetDirectories(accountsDir))
+                {
+                    var finalFilePath = Path.Combine(accountDir, "bg_stats.jsonl");
+                    if (!File.Exists(finalFilePath) || new FileInfo(finalFilePath).Length <= 0)
+                        continue;
+
+                    var latestSnapshot = TryGetLatestSnapshot(finalFilePath);
+                    if (latestSnapshot == null)
+                        continue;
+
+                    var timestamp = ParseTimestamp(latestSnapshot.Timestamp);
+                    if (timestamp <= bestTimestamp)
+                        continue;
+
+                    bestTimestamp = timestamp;
+                    bestAccount = NormalizeAccountRecord(new AccountRecord
+                    {
+                        Key = Path.GetFileName(accountDir),
+                        AccountHi = latestSnapshot.AccountHi,
+                        AccountLo = latestSnapshot.AccountLo,
+                        BattleTag = latestSnapshot.BattleTag,
+                        ServerInfo = latestSnapshot.ServerInfo,
+                        RegionCode = latestSnapshot.RegionCode,
+                        RegionName = latestSnapshot.RegionName
+                    });
+                }
+            }
+
+            return bestAccount;
         }
 
         public IReadOnlyList<string> GetDisplayTags(BgSnapshot snapshot)
@@ -175,12 +299,32 @@ namespace HDTplugins.Services
 
         public ArchiveVersionInfo GetLatestRecordedArchiveForDisplay()
         {
-            return GetLatestRecordedArchive() ?? CurrentArchive;
+            return GetMostRecentRecordedArchive() ?? CurrentArchive;
+        }
+
+        public string GetArchiveDisplayName(ArchiveVersionInfo archive)
+        {
+            if (archive == null)
+                return string.Empty;
+
+            var rawVersion = GetArchiveRawVersion(archive);
+            if (!string.IsNullOrWhiteSpace(rawVersion))
+                return _versionDisplayService.MapVersion(rawVersion);
+
+            return archive.DisplayName ?? string.Empty;
+        }
+
+        public string GetGameVersionDisplayName(string rawVersion)
+        {
+            if (string.IsNullOrWhiteSpace(rawVersion))
+                return string.Empty;
+
+            return _versionDisplayService.MapVersion(rawVersion);
         }
 
         public ArchiveVersionInfo RefreshLatestRecordedArchiveForDisplay()
         {
-            var latest = GetLatestRecordedArchive();
+            var latest = GetMostRecentRecordedArchive();
             if (latest == null)
                 return CurrentArchive;
 
@@ -196,6 +340,8 @@ namespace HDTplugins.Services
             CurrentMatchTimestampUtc = null;
             PendingWritten = false;
             _activeMatchArchive = null;
+            _activeArchiveDir = null;
+            _activeMatchAccount = null;
             _activeFinalFilePath = null;
             _activePendingFilePath = null;
         }
@@ -268,7 +414,7 @@ namespace HDTplugins.Services
             }
         }
 
-        public void WritePendingIfNeeded(string heroCardId, string heroSkinCardId, string initialHeroPowerCardId, int ratingBefore)
+        public void WritePendingIfNeeded(string heroCardId, string heroSkinCardId, string[] initialHeroPowerCardIds, int ratingBefore)
         {
             try
             {
@@ -283,10 +429,11 @@ namespace HDTplugins.Services
                 var pendingLine = "{"
                     + $"\"matchId\":\"{JsonEscape(CurrentMatchId)}\"," 
                     + $"\"timestamp\":\"{JsonEscape(CurrentMatchTimestampUtc)}\"," 
-                    + $"\"gameVersion\":\"{JsonEscape((_activeMatchArchive ?? CurrentArchive)?.DisplayName ?? string.Empty)}\"," 
+                    + $"\"gameVersion\":\"{JsonEscape(GetArchiveRawVersion(_activeMatchArchive ?? CurrentArchive))}\"," 
                     + $"\"heroCardId\":\"{JsonEscape(heroCardId)}\"," 
                     + $"\"heroSkinCardId\":\"{JsonEscape(heroSkinCardId ?? string.Empty)}\"," 
-                    + $"\"initialHeroPowerCardId\":\"{JsonEscape(initialHeroPowerCardId ?? string.Empty)}\""
+                    + $"\"initialHeroPowerCardIds\":{SerializeStringArray(initialHeroPowerCardIds)}," 
+                    + $"\"initialHeroPowerCardId\":\"{JsonEscape((initialHeroPowerCardIds ?? Array.Empty<string>()).FirstOrDefault() ?? string.Empty)}\""
                     + "}";
 
                 File.AppendAllText(pendingFilePath, pendingLine + Environment.NewLine, Encoding.UTF8);
@@ -297,7 +444,7 @@ namespace HDTplugins.Services
             }
         }
 
-        public void FinalizeIfPossible(string matchId, string timestamp, string heroCardId, string heroSkinCardId, string initialHeroPowerCardId, string finalHeroPowerCardId, int placement, int ratingBefore, int ratingAfter, string[] offeredHeroCardIds, string[] availableRaces, string anomalyCardId, IReadOnlyCollection<BgBoardMinionSnapshot> finalBoard, IReadOnlyCollection<BgTavernUpgradePoint> tavernUpgradeTimeline)
+        public void FinalizeIfPossible(string matchId, string timestamp, string heroCardId, string heroSkinCardId, string[] initialHeroPowerCardIds, string[] finalHeroPowerCardIds, int placement, int ratingBefore, int ratingAfter, string[] offeredHeroCardIds, string[] availableRaces, string anomalyCardId, IReadOnlyCollection<BgBoardMinionSnapshot> finalBoard, IReadOnlyCollection<BgTavernUpgradePoint> tavernUpgradeTimeline)
         {
             try
             {
@@ -318,12 +465,21 @@ namespace HDTplugins.Services
                 {
                     MatchId = matchId,
                     Timestamp = string.IsNullOrEmpty(timestamp) ? DateTime.UtcNow.ToString("o") : timestamp,
-                    GameVersion = (_activeMatchArchive ?? CurrentArchive)?.DisplayName ?? string.Empty,
+                    GameVersion = GetArchiveRawVersion(_activeMatchArchive ?? CurrentArchive),
+                    AccountKey = (_activeMatchAccount ?? CurrentAccount ?? CreateUnknownAccount()).Key,
+                    AccountHi = (_activeMatchAccount ?? CurrentAccount)?.AccountHi ?? string.Empty,
+                    AccountLo = (_activeMatchAccount ?? CurrentAccount)?.AccountLo ?? string.Empty,
+                    BattleTag = (_activeMatchAccount ?? CurrentAccount)?.BattleTag ?? string.Empty,
+                    ServerInfo = (_activeMatchAccount ?? CurrentAccount)?.ServerInfo ?? string.Empty,
+                    RegionCode = (_activeMatchAccount ?? CurrentAccount)?.RegionCode ?? string.Empty,
+                    RegionName = (_activeMatchAccount ?? CurrentAccount)?.RegionName ?? string.Empty,
                     HeroCardId = heroCardId,
                     HeroName = GetCardName(heroCardId),
                     HeroSkinCardId = heroSkinCardId ?? string.Empty,
-                    InitialHeroPowerCardId = initialHeroPowerCardId ?? string.Empty,
-                    HeroPowerCardId = finalHeroPowerCardId ?? string.Empty,
+                    InitialHeroPowerCardIds = (initialHeroPowerCardIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Take(2).ToArray(),
+                    InitialHeroPowerCardId = (initialHeroPowerCardIds ?? Array.Empty<string>()).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? string.Empty,
+                    HeroPowerCardIds = (finalHeroPowerCardIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Take(2).ToArray(),
+                    HeroPowerCardId = (finalHeroPowerCardIds ?? Array.Empty<string>()).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? string.Empty,
                     Placement = placement,
                     RatingBefore = ratingBefore,
                     RatingAfter = ratingAfter,
@@ -364,11 +520,11 @@ namespace HDTplugins.Services
 
             var archiveDir = Path.Combine(_archivesDir ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HDT_BGStats", "Data", "archives"), target.Key);
             Directory.CreateDirectory(archiveDir);
-
-            _finalFilePath = Path.Combine(archiveDir, "bg_stats.jsonl");
-            _pendingFilePath = Path.Combine(archiveDir, "bg_stats_pending.jsonl");
+            _currentArchiveDir = archiveDir;
+            EnsureLegacyArchiveMigratedToUnknown(archiveDir);
             CurrentArchive = target;
             File.WriteAllText(Path.Combine(archiveDir, "label.txt"), target.DisplayName ?? string.Empty, Encoding.UTF8);
+            SetCurrentAccountInternal(CurrentAccount ?? CreateUnknownAccount());
         }
 
         private void SetActiveMatchArchive(ArchiveVersionInfo info)
@@ -381,9 +537,8 @@ namespace HDTplugins.Services
 
             var archiveDir = Path.Combine(_archivesDir ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HDT_BGStats", "Data", "archives"), target.Key);
             Directory.CreateDirectory(archiveDir);
-
-            _activeFinalFilePath = Path.Combine(archiveDir, "bg_stats.jsonl");
-            _activePendingFilePath = Path.Combine(archiveDir, "bg_stats_pending.jsonl");
+            _activeArchiveDir = archiveDir;
+            EnsureLegacyArchiveMigratedToUnknown(archiveDir);
             _activeMatchArchive = target;
             File.WriteAllText(Path.Combine(archiveDir, "label.txt"), target.DisplayName ?? string.Empty, Encoding.UTF8);
         }
@@ -394,7 +549,7 @@ namespace HDTplugins.Services
             if (HasRecordedMatches(preferred?.Key))
                 return preferred;
 
-            var latestRecorded = GetLatestRecordedArchive();
+            var latestRecorded = GetMostRecentRecordedArchive();
             if (latestRecorded != null)
                 return latestRecorded;
 
@@ -403,7 +558,7 @@ namespace HDTplugins.Services
 
         private ArchiveVersionInfo ResolveBestArchiveForCurrentVersion()
         {
-            var detected = ArchiveKeyProvider.ResolveCurrentArchive(_versionDisplayService.MapVersion);
+            var detected = ArchiveKeyProvider.ResolveCurrentArchive(null);
             if (detected == null)
                 return ArchiveKeyProvider.GetDefaultArchive();
 
@@ -449,7 +604,8 @@ namespace HDTplugins.Services
             {
                 try
                 {
-                    var finalFile = Path.Combine(dir, "bg_stats.jsonl");
+                    EnsureLegacyArchiveMigratedToUnknown(dir);
+                    var finalFile = GetAccountFinalFilePath(dir, CurrentAccountKey);
                     if (!File.Exists(finalFile) || new FileInfo(finalFile).Length <= 0)
                         continue;
 
@@ -479,6 +635,46 @@ namespace HDTplugins.Services
                 .FirstOrDefault();
         }
 
+        private ArchiveVersionInfo GetMostRecentRecordedArchive()
+        {
+            if (string.IsNullOrWhiteSpace(_archivesDir) || !Directory.Exists(_archivesDir))
+                return null;
+
+            ArchiveVersionInfo bestArchive = null;
+            DateTime bestTimestamp = default(DateTime);
+
+            foreach (var archiveDir in Directory.GetDirectories(_archivesDir))
+            {
+                EnsureLegacyArchiveMigratedToUnknown(archiveDir);
+                var accountsDir = Path.Combine(archiveDir, "accounts");
+                if (!Directory.Exists(accountsDir))
+                    continue;
+
+                foreach (var accountDir in Directory.GetDirectories(accountsDir))
+                {
+                    var finalFilePath = Path.Combine(accountDir, "bg_stats.jsonl");
+                    if (!File.Exists(finalFilePath) || new FileInfo(finalFilePath).Length <= 0)
+                        continue;
+
+                    var latestSnapshot = TryGetLatestSnapshot(finalFilePath);
+                    if (latestSnapshot == null)
+                        continue;
+
+                    var timestamp = ParseTimestamp(latestSnapshot.Timestamp);
+                    if (timestamp <= bestTimestamp)
+                        continue;
+
+                    bestTimestamp = timestamp;
+                    var key = Path.GetFileName(archiveDir);
+                    var labelPath = Path.Combine(archiveDir, "label.txt");
+                    var label = File.Exists(labelPath) ? File.ReadAllText(labelPath, Encoding.UTF8) : null;
+                    bestArchive = ArchiveKeyProvider.CreateFromStoredLabel(key, label);
+                }
+            }
+
+            return bestArchive;
+        }
+
         private bool HasRecordedMatches(string archiveKey)
         {
             if (string.IsNullOrWhiteSpace(archiveKey) || string.IsNullOrWhiteSpace(_archivesDir))
@@ -486,7 +682,9 @@ namespace HDTplugins.Services
 
             try
             {
-                var finalFile = Path.Combine(_archivesDir, archiveKey, "bg_stats.jsonl");
+                var archiveDir = Path.Combine(_archivesDir, archiveKey);
+                EnsureLegacyArchiveMigratedToUnknown(archiveDir);
+                var finalFile = GetAccountFinalFilePath(archiveDir, CurrentAccountKey);
                 return File.Exists(finalFile) && new FileInfo(finalFile).Length > 0;
             }
             catch
@@ -497,6 +695,27 @@ namespace HDTplugins.Services
 
         private BgSnapshot NormalizeSnapshot(BgSnapshot snapshot)
         {
+            var normalizedAccount = NormalizeAccountRecord(new AccountRecord
+            {
+                Key = snapshot.AccountKey,
+                AccountHi = snapshot.AccountHi,
+                AccountLo = snapshot.AccountLo,
+                BattleTag = snapshot.BattleTag,
+                ServerInfo = snapshot.ServerInfo,
+                RegionCode = snapshot.RegionCode,
+                RegionName = snapshot.RegionName
+            });
+            snapshot.AccountKey = normalizedAccount.Key;
+            snapshot.AccountHi = normalizedAccount.AccountHi;
+            snapshot.AccountLo = normalizedAccount.AccountLo;
+            snapshot.BattleTag = normalizedAccount.BattleTag;
+            snapshot.ServerInfo = normalizedAccount.ServerInfo;
+            snapshot.RegionCode = normalizedAccount.RegionCode;
+            snapshot.RegionName = normalizedAccount.RegionName;
+            snapshot.InitialHeroPowerCardIds = NormalizeHeroPowerCardIds(snapshot.InitialHeroPowerCardIds, snapshot.InitialHeroPowerCardId);
+            snapshot.InitialHeroPowerCardId = snapshot.InitialHeroPowerCardIds.FirstOrDefault() ?? string.Empty;
+            snapshot.HeroPowerCardIds = NormalizeHeroPowerCardIds(snapshot.HeroPowerCardIds, snapshot.HeroPowerCardId);
+            snapshot.HeroPowerCardId = snapshot.HeroPowerCardIds.FirstOrDefault() ?? string.Empty;
             snapshot.OfferedHeroCardIds = (snapshot.OfferedHeroCardIds ?? Array.Empty<string>())
                 .Where(x => !string.IsNullOrWhiteSpace(x))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -691,6 +910,234 @@ namespace HDTplugins.Services
                 .ToList();
         }
 
+        private void SetCurrentAccountInternal(AccountRecord account)
+        {
+            var normalized = NormalizeAccountRecord(account);
+            CurrentAccount = normalized;
+
+            var archiveDir = _currentArchiveDir
+                ?? Path.Combine(_archivesDir ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HDT_BGStats", "Data", "archives"), CurrentArchive?.Key ?? ArchiveKeyProvider.GetDefaultArchive().Key);
+            Directory.CreateDirectory(archiveDir);
+            EnsureLegacyArchiveMigratedToUnknown(archiveDir);
+
+            _finalFilePath = GetAccountFinalFilePath(archiveDir, normalized.Key);
+            _pendingFilePath = GetAccountPendingFilePath(archiveDir, normalized.Key);
+            Directory.CreateDirectory(Path.GetDirectoryName(_finalFilePath));
+        }
+
+        private void SetActiveMatchAccount(AccountRecord account)
+        {
+            var normalized = NormalizeAccountRecord(account);
+            _activeMatchAccount = normalized;
+            var archiveDir = _activeArchiveDir ?? _currentArchiveDir;
+            if (string.IsNullOrWhiteSpace(archiveDir))
+                return;
+
+            Directory.CreateDirectory(archiveDir);
+            EnsureLegacyArchiveMigratedToUnknown(archiveDir);
+            _activeFinalFilePath = GetAccountFinalFilePath(archiveDir, normalized.Key);
+            _activePendingFilePath = GetAccountPendingFilePath(archiveDir, normalized.Key);
+            Directory.CreateDirectory(Path.GetDirectoryName(_activeFinalFilePath));
+        }
+
+        private AccountRecord ResolveExistingAccount(string accountKey)
+        {
+            if (string.IsNullOrWhiteSpace(accountKey))
+                return null;
+            return GetAvailableAccounts().FirstOrDefault(x => string.Equals(x.Key, accountKey, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static AccountRecord NormalizeAccountRecord(AccountRecord account)
+        {
+            var normalized = account ?? new AccountRecord();
+            normalized.AccountHi = NormalizeText(normalized.AccountHi);
+            normalized.AccountLo = NormalizeText(normalized.AccountLo);
+            normalized.BattleTag = NormalizeText(normalized.BattleTag);
+            normalized.ServerInfo = NormalizeText(normalized.ServerInfo);
+            normalized.RegionCode = NormalizeText(normalized.RegionCode);
+            normalized.RegionName = NormalizeText(normalized.RegionName);
+
+            var isUnknown = string.IsNullOrWhiteSpace(normalized.AccountHi)
+                && string.IsNullOrWhiteSpace(normalized.AccountLo)
+                && string.IsNullOrWhiteSpace(normalized.BattleTag)
+                && string.IsNullOrWhiteSpace(normalized.ServerInfo);
+
+            normalized.IsUnknown = isUnknown;
+            normalized.Key = isUnknown
+                ? UnknownAccountKey
+                : BuildAccountKey(normalized.AccountHi, normalized.AccountLo, normalized.RegionCode, normalized.BattleTag, normalized.ServerInfo);
+            return normalized;
+        }
+
+        private static string BuildAccountKey(string accountHi, string accountLo, string regionCode, string battleTag, string serverInfo)
+        {
+            if (!string.IsNullOrWhiteSpace(accountHi) || !string.IsNullOrWhiteSpace(accountLo))
+                return SanitizePathSegment($"{accountHi ?? "0"}_{accountLo ?? "0"}_{regionCode ?? "0"}");
+
+            var fallback = !string.IsNullOrWhiteSpace(battleTag) ? battleTag : serverInfo;
+            return string.IsNullOrWhiteSpace(fallback) ? UnknownAccountKey : SanitizePathSegment(fallback);
+        }
+
+        private static string SanitizePathSegment(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return UnknownAccountKey;
+
+            var builder = new StringBuilder(value.Length);
+            foreach (var ch in value.Trim())
+            {
+                if (char.IsLetterOrDigit(ch) || ch == '-' || ch == '_')
+                    builder.Append(ch);
+                else
+                    builder.Append('_');
+            }
+
+            var result = builder.ToString().Trim('_');
+            return string.IsNullOrWhiteSpace(result) ? UnknownAccountKey : result;
+        }
+
+        private static string NormalizeText(string value)
+        {
+            return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        }
+
+        private static void MergeAccountRecord(IDictionary<string, AccountRecord> accounts, AccountRecord record)
+        {
+            if (record == null)
+                return;
+
+            if (!accounts.TryGetValue(record.Key, out var existing))
+            {
+                accounts[record.Key] = record;
+                return;
+            }
+
+            existing.MatchCount += record.MatchCount;
+            if (string.IsNullOrWhiteSpace(existing.BattleTag) && !string.IsNullOrWhiteSpace(record.BattleTag))
+                existing.BattleTag = record.BattleTag;
+            if (string.IsNullOrWhiteSpace(existing.ServerInfo) && !string.IsNullOrWhiteSpace(record.ServerInfo))
+                existing.ServerInfo = record.ServerInfo;
+            if (string.IsNullOrWhiteSpace(existing.RegionCode) && !string.IsNullOrWhiteSpace(record.RegionCode))
+                existing.RegionCode = record.RegionCode;
+            if (string.IsNullOrWhiteSpace(existing.RegionName) && !string.IsNullOrWhiteSpace(record.RegionName))
+                existing.RegionName = record.RegionName;
+            if (string.IsNullOrWhiteSpace(existing.AccountHi) && !string.IsNullOrWhiteSpace(record.AccountHi))
+                existing.AccountHi = record.AccountHi;
+            if (string.IsNullOrWhiteSpace(existing.AccountLo) && !string.IsNullOrWhiteSpace(record.AccountLo))
+                existing.AccountLo = record.AccountLo;
+            existing.IsUnknown &= record.IsUnknown;
+        }
+
+        private bool ShouldRefreshCurrentAccountMetadata(AccountRecord normalized)
+        {
+            if (CurrentAccount == null || normalized == null)
+                return false;
+            if (!string.Equals(CurrentAccount.Key, normalized.Key, StringComparison.OrdinalIgnoreCase))
+                return false;
+            if (CurrentAccount.MatchCount == 0 && !string.IsNullOrWhiteSpace(normalized.BattleTag))
+                return true;
+            if (string.IsNullOrWhiteSpace(CurrentAccount.BattleTag) && !string.IsNullOrWhiteSpace(normalized.BattleTag))
+                return true;
+            if (string.IsNullOrWhiteSpace(CurrentAccount.RegionName) && !string.IsNullOrWhiteSpace(normalized.RegionName))
+                return true;
+            return string.IsNullOrWhiteSpace(CurrentAccount.RegionCode) && !string.IsNullOrWhiteSpace(normalized.RegionCode);
+        }
+
+        private AccountRecord TryReadAccountRecord(string finalFilePath, string accountKey)
+        {
+            try
+            {
+                var snapshot = File.ReadLines(finalFilePath, Encoding.UTF8)
+                    .Select(SafeDeserialize)
+                    .FirstOrDefault(x => x != null);
+                if (snapshot == null)
+                    return string.Equals(accountKey, UnknownAccountKey, StringComparison.OrdinalIgnoreCase) ? CreateUnknownAccount() : null;
+
+                var normalizedSnapshot = NormalizeSnapshot(snapshot);
+                return NormalizeAccountRecord(new AccountRecord
+                {
+                    Key = accountKey,
+                    AccountHi = normalizedSnapshot.AccountHi,
+                    AccountLo = normalizedSnapshot.AccountLo,
+                    BattleTag = normalizedSnapshot.BattleTag,
+                    ServerInfo = normalizedSnapshot.ServerInfo,
+                    RegionCode = normalizedSnapshot.RegionCode,
+                    RegionName = normalizedSnapshot.RegionName
+                });
+            }
+            catch
+            {
+                return string.Equals(accountKey, UnknownAccountKey, StringComparison.OrdinalIgnoreCase) ? CreateUnknownAccount() : null;
+            }
+        }
+
+        private static int CountSnapshots(string finalFilePath)
+        {
+            try
+            {
+                return File.ReadLines(finalFilePath, Encoding.UTF8).Count(x => !string.IsNullOrWhiteSpace(x));
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        private BgSnapshot TryGetLatestSnapshot(string finalFilePath)
+        {
+            try
+            {
+                BgSnapshot best = null;
+                DateTime bestTimestamp = default(DateTime);
+                foreach (var line in File.ReadLines(finalFilePath, Encoding.UTF8))
+                {
+                    var snapshot = SafeDeserialize(line);
+                    if (snapshot == null || snapshot.Placement <= 0)
+                        continue;
+
+                    snapshot = NormalizeSnapshot(snapshot);
+                    var timestamp = ParseTimestamp(snapshot.Timestamp);
+                    if (timestamp <= bestTimestamp)
+                        continue;
+
+                    bestTimestamp = timestamp;
+                    best = snapshot;
+                }
+
+                return best;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private void EnsureLegacyArchiveMigratedToUnknown(string archiveDir)
+        {
+            if (string.IsNullOrWhiteSpace(archiveDir) || !Directory.Exists(archiveDir))
+                return;
+
+            var legacyFinal = Path.Combine(archiveDir, "bg_stats.jsonl");
+            var legacyPending = Path.Combine(archiveDir, "bg_stats_pending.jsonl");
+            if (!File.Exists(legacyFinal) && !File.Exists(legacyPending))
+                return;
+
+            var unknownFinal = GetAccountFinalFilePath(archiveDir, UnknownAccountKey);
+            var unknownPending = GetAccountPendingFilePath(archiveDir, UnknownAccountKey);
+            MigrateIfNeeded(legacyFinal, unknownFinal);
+            MigrateIfNeeded(legacyPending, unknownPending);
+        }
+
+        private static AccountRecord CreateUnknownAccount()
+        {
+            return new AccountRecord
+            {
+                Key = UnknownAccountKey,
+                IsUnknown = true,
+                RegionName = "Unknown"
+            };
+        }
+
         private static IEnumerable<string> SanitizeTags(IEnumerable<string> tags, int maxCount)
         {
             return (tags ?? Array.Empty<string>())
@@ -732,6 +1179,21 @@ namespace HDTplugins.Services
             return string.IsNullOrWhiteSpace(_activePendingFilePath) ? _pendingFilePath : _activePendingFilePath;
         }
 
+        private static string GetAccountDirectory(string archiveDir, string accountKey)
+        {
+            return Path.Combine(archiveDir, "accounts", string.IsNullOrWhiteSpace(accountKey) ? UnknownAccountKey : accountKey);
+        }
+
+        private static string GetAccountFinalFilePath(string archiveDir, string accountKey)
+        {
+            return Path.Combine(GetAccountDirectory(archiveDir, accountKey), "bg_stats.jsonl");
+        }
+
+        private static string GetAccountPendingFilePath(string archiveDir, string accountKey)
+        {
+            return Path.Combine(GetAccountDirectory(archiveDir, accountKey), "bg_stats_pending.jsonl");
+        }
+
         private static long GetArchiveSortKey(ArchiveVersionInfo archive)
         {
             if (archive == null || string.IsNullOrWhiteSpace(archive.PatchVersion))
@@ -749,6 +1211,17 @@ namespace HDTplugins.Services
                 long.TryParse(parts[2], out patch);
 
             return major * 1_000_000L + minor * 1_000L + patch;
+        }
+
+        private static string GetArchiveRawVersion(ArchiveVersionInfo archive)
+        {
+            if (archive == null)
+                return string.Empty;
+
+            if (!string.IsNullOrWhiteSpace(archive.PatchVersion))
+                return archive.PatchVersion.Trim();
+
+            return string.IsNullOrWhiteSpace(archive.DisplayName) ? string.Empty : archive.DisplayName.Trim();
         }
 
         private static string BuildFinalBoardDisplay(BgSnapshot snapshot)
@@ -785,6 +1258,30 @@ namespace HDTplugins.Services
             if (string.IsNullOrEmpty(s))
                 return string.Empty;
             return s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", "\\r").Replace("\n", "\\n").Replace("\t", "\\t");
+        }
+
+        private static string[] NormalizeHeroPowerCardIds(IEnumerable<string> cardIds, string fallbackCardId)
+        {
+            var normalized = (cardIds ?? Array.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(2)
+                .ToList();
+
+            if (normalized.Count == 0 && !string.IsNullOrWhiteSpace(fallbackCardId))
+                normalized.Add(fallbackCardId.Trim());
+
+            return normalized.ToArray();
+        }
+
+        private static string SerializeStringArray(IEnumerable<string> values)
+        {
+            var items = (values ?? Array.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => "\"" + JsonEscape(x.Trim()) + "\"")
+                .ToArray();
+            return "[" + string.Join(",", items) + "]";
         }
 
         private static void MigrateIfNeeded(string from, string to)

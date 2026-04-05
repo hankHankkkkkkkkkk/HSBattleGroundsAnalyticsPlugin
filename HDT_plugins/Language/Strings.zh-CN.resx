@@ -267,6 +267,21 @@
   <data name="MatchDetail_SelectedHeroFormat" xml:space="preserve">
     <value>选用英雄：{0}</value>
   </data>
+  <data name="MatchDetail_FirstHeroPowerFormat" xml:space="preserve">
+    <value>一技能：{0}</value>
+  </data>
+  <data name="MatchDetail_HeroPowerSlotFormat" xml:space="preserve">
+    <value>{0}技能{1}：{2}</value>
+  </data>
+  <data name="MatchDetail_InitialHeroPowerLabel" xml:space="preserve">
+    <value>初始</value>
+  </data>
+  <data name="MatchDetail_FinalHeroPowerLabel" xml:space="preserve">
+    <value>终局</value>
+  </data>
+  <data name="MatchDetail_SecondHeroPowerFormat" xml:space="preserve">
+    <value>二技能：{0}</value>
+  </data>
   <data name="MatchDetail_FinalHeroPowerFormat" xml:space="preserve">
     <value>最终英雄技能：{0}</value>
   </data>

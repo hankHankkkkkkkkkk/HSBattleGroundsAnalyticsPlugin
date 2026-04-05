@@ -58,6 +58,7 @@
     <Reference Include="WindowsBase" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Models\AccountRecord.cs" />
     <Compile Include="Models\ArchiveVersionInfo.cs" />
     <Compile Include="Models\BgMatchRow.cs" />
     <Compile Include="Models\BgSnapshot.cs" />

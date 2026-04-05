@@ -1,10 +1,13 @@
 ﻿using Hearthstone_Deck_Tracker.API;
 using Hearthstone_Deck_Tracker.Plugins;
 using System;
+using System.Diagnostics;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
 using HDTplugins.Localization;
+using HDTplugins.Models;
 using HDTplugins.Services;
 using HDTplugins.Views;
 
@@ -17,7 +20,7 @@ namespace HDTplugins
         public string Name => Loc.S("Plugin_Name");
         public string Description => Loc.S("Plugin_Description");
         public string Author => "Hank";
-        public Version Version => new Version(0, 10, 1);
+        public Version Version => new Version(0, 11, 6);
         public string ButtonText => Loc.S("Plugin_ButtonText");
         public MenuItem MenuItem => _menuItem;
 
@@ -29,6 +32,8 @@ namespace HDTplugins
         private BgStatsWindow _statsWindow;
         private MenuItem _menuItem;
         private DispatcherTimer _startupGameTextRefreshTimer;
+        private bool _wasHearthstoneRunning;
+        private string _lastRuntimeAccountKey;
 
         public void OnLoad()
         {
@@ -41,6 +46,7 @@ namespace HDTplugins
 
             _settingsService = new PluginSettingsService();
             _settingsService.Initialize(_store.TablesDirectoryPath);
+            _store.InitializeSelectedAccount(_settingsService.Settings.SelectedAccountKey);
             LocalizationService.Initialize(_settingsService.Settings.Language);
             GameTextService.Initialize();
             ScheduleStartupGameTextRefresh();
@@ -78,24 +84,26 @@ namespace HDTplugins
             if (!_enabled)
                 return;
 
+            UpdateRuntimeAccountContext();
             _probe.Tick();
             if (!_probe.IsBattlegrounds || _finalizedThisMatch)
                 return;
 
             if (_probe.HasResolvedHero && !_store.PendingWritten)
             {
-                _store.WritePendingIfNeeded(_probe.HeroCardId, _probe.HeroSkinCardId, _probe.InitialHeroPowerCardId, _probe.RatingBefore);
+                _store.WritePendingIfNeeded(_probe.HeroCardId, _probe.HeroSkinCardId, _probe.InitialHeroPowerCardIds, _probe.RatingBefore);
             }
 
             if (_store.PendingWritten && _probe.HasResolvedPlacement && _probe.HasResolvedRatingAfter)
             {
+                HdtLog.Info($"[BGStats][HeroPower] finalize args hero={_probe.HeroCardId ?? "null"} initial=[{string.Join(", ", _probe.InitialHeroPowerCardIds)}] combat=[{string.Join(", ", _probe.HeroPowerCardIds)}]");
                 _store.FinalizeIfPossible(
                     _store.CurrentMatchId,
                     _store.CurrentMatchTimestampUtc,
                     _probe.HeroCardId,
                     _probe.HeroSkinCardId,
-                    _probe.InitialHeroPowerCardId,
-                    _probe.HeroPowerCardId,
+                    _probe.InitialHeroPowerCardIds,
+                    _probe.HeroPowerCardIds,
                     _probe.Placement,
                     _probe.RatingBefore,
                     _probe.RatingAfter,
@@ -122,6 +130,7 @@ namespace HDTplugins
             _store.ResetMatch();
             _store.ConfirmCurrentArchiveForMatch();
             _probe.OnGameStart();
+            _lastRuntimeAccountKey = null;
             _statsWindow?.SyncVersionSelection(null);
         }
 
@@ -240,6 +249,116 @@ namespace HDTplugins
             }
             catch
             {
+            }
+        }
+
+        private void UpdateRuntimeAccountContext()
+        {
+            var isRunning = IsHearthstoneRunning();
+            if (!isRunning)
+            {
+                _wasHearthstoneRunning = false;
+                return;
+            }
+
+            _probe.RefreshRuntimeAccountContext();
+            if (!_probe.HasAttemptedAccountResolution)
+                return;
+
+            var account = BuildCurrentAccountRecord();
+            if (string.IsNullOrWhiteSpace(account.AccountHi)
+                && string.IsNullOrWhiteSpace(account.AccountLo)
+                && string.IsNullOrWhiteSpace(account.BattleTag)
+                && string.IsNullOrWhiteSpace(account.ServerInfo))
+                return;
+
+            var runtimeKey = BuildRuntimeAccountKey(account);
+            var forceApply = !_wasHearthstoneRunning;
+            _wasHearthstoneRunning = true;
+            var hasRicherMetadata = HasRicherAccountMetadata(_store.CurrentAccount, account);
+            if (!forceApply && !hasRicherMetadata && string.Equals(runtimeKey, _lastRuntimeAccountKey, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            var previousKey = _store.CurrentAccountKey;
+            _store.ApplyCurrentAccountFromGame(account);
+            _lastRuntimeAccountKey = runtimeKey;
+            if (hasRicherMetadata)
+                HdtLog.Info("[BGStats][Account] 已用运行时 BattleTag/区服信息刷新当前显示账号: " + (account.BattleTag ?? runtimeKey));
+            if (string.Equals(previousKey, _store.CurrentAccountKey, StringComparison.OrdinalIgnoreCase))
+            {
+                if (hasRicherMetadata)
+                    _statsWindow?.Reload();
+                return;
+            }
+
+            _settingsService.Settings.SelectedAccountKey = _store.CurrentAccountKey;
+            _settingsService.Save();
+            _statsWindow?.Reload();
+        }
+
+        private AccountRecord BuildCurrentAccountRecord()
+        {
+            return new AccountRecord
+            {
+                AccountHi = _probe.AccountHi,
+                AccountLo = _probe.AccountLo,
+                BattleTag = _probe.BattleTag,
+                ServerInfo = _probe.ServerInfo,
+                RegionCode = _probe.RegionCode,
+                RegionName = _probe.RegionName
+            };
+        }
+
+        private static string BuildRuntimeAccountKey(AccountRecord account)
+        {
+            if (account == null)
+                return string.Empty;
+
+            if (!string.IsNullOrWhiteSpace(account.AccountHi) || !string.IsNullOrWhiteSpace(account.AccountLo))
+                return $"{account.AccountHi ?? "0"}|{account.AccountLo ?? "0"}|{account.RegionCode ?? account.RegionName ?? "0"}";
+
+            return account.BattleTag ?? account.ServerInfo ?? string.Empty;
+        }
+
+        private static bool HasRicherAccountMetadata(AccountRecord current, AccountRecord incoming)
+        {
+            if (current == null || incoming == null)
+                return false;
+
+            var sameHi = string.Equals(current.AccountHi ?? string.Empty, incoming.AccountHi ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            var sameLo = string.Equals(current.AccountLo ?? string.Empty, incoming.AccountLo ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            var sameBattleTag = !string.IsNullOrWhiteSpace(current.BattleTag) && string.Equals(current.BattleTag, incoming.BattleTag, StringComparison.OrdinalIgnoreCase);
+            var sameAccount = sameBattleTag || (sameHi && sameLo && (!string.IsNullOrWhiteSpace(current.AccountHi) || !string.IsNullOrWhiteSpace(current.AccountLo)));
+            if (!sameAccount)
+                return false;
+
+            if (string.IsNullOrWhiteSpace(current.BattleTag) && !string.IsNullOrWhiteSpace(incoming.BattleTag))
+                return true;
+            if (string.IsNullOrWhiteSpace(current.RegionName) && !string.IsNullOrWhiteSpace(incoming.RegionName))
+                return true;
+            return string.IsNullOrWhiteSpace(current.RegionCode) && !string.IsNullOrWhiteSpace(incoming.RegionCode);
+        }
+
+        private static bool IsHearthstoneRunning()
+        {
+            try
+            {
+                return Process.GetProcessesByName("Hearthstone")
+                    .Any(process =>
+                    {
+                        try
+                        {
+                            return process != null && !process.HasExited && process.MainWindowHandle != IntPtr.Zero;
+                        }
+                        catch
+                        {
+                            return false;
+                        }
+                    });
+            }
+            catch
+            {
+                return false;
             }
         }
     }

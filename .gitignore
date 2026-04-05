@@ -366,7 +366,6 @@ FodyWeavers.xsd
 .codex/
 .tmpbuild/
 .build_tmp/
-AGENT.md
 tmpbuild/
 tmpbuild_verify/
 tmpobj_verify/

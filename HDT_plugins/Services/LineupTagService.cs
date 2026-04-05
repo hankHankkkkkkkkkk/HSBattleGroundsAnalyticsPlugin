@@ -116,7 +116,10 @@ namespace HDTplugins.Services
                 case "herois":
                     return string.Equals(snapshot.HeroCardId, condition.HeroCardId, StringComparison.OrdinalIgnoreCase);
                 case "heropoweris":
-                    return string.Equals(snapshot.HeroPowerCardId, condition.HeroPowerCardId, StringComparison.OrdinalIgnoreCase);
+                    return (snapshot.InitialHeroPowerCardIds ?? new[] { snapshot.InitialHeroPowerCardId })
+                               .Any(x => string.Equals(x, condition.HeroPowerCardId, StringComparison.OrdinalIgnoreCase))
+                        || (snapshot.HeroPowerCardIds ?? new[] { snapshot.HeroPowerCardId })
+                               .Any(x => string.Equals(x, condition.HeroPowerCardId, StringComparison.OrdinalIgnoreCase));
                 case "taverntieratleast":
                     return (snapshot.TavernUpgradeTimeline ?? new List<BgTavernUpgradePoint>()).DefaultIfEmpty(new BgTavernUpgradePoint()).Max(x => x == null ? 0 : x.TavernTier) >= condition.Value;
                 case "totalminionsatleast":

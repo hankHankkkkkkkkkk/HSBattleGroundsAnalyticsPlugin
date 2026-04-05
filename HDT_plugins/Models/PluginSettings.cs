@@ -8,6 +8,7 @@ namespace HDTplugins.Models
         public string Language { get; set; }
         public double ScoreLine { get; set; } = 4.5;
         public string HeroStatsDefaultSort { get; set; } = "Picks";
+        public string SelectedAccountKey { get; set; }
 
         public double GetNormalizedScoreLine()
         {

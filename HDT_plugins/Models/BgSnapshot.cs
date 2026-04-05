@@ -7,11 +7,20 @@ namespace HDTplugins.Models
         public string MatchId { get; set; }
         public string Timestamp { get; set; }
         public string GameVersion { get; set; }
+        public string AccountKey { get; set; }
+        public string AccountHi { get; set; }
+        public string AccountLo { get; set; }
+        public string BattleTag { get; set; }
+        public string ServerInfo { get; set; }
+        public string RegionCode { get; set; }
+        public string RegionName { get; set; }
 
         public string HeroCardId { get; set; }
         public string HeroName { get; set; }
         public string HeroSkinCardId { get; set; }
+        public string[] InitialHeroPowerCardIds { get; set; }
         public string InitialHeroPowerCardId { get; set; }
+        public string[] HeroPowerCardIds { get; set; }
         public string HeroPowerCardId { get; set; }
 
         public int RatingBefore { get; set; }
