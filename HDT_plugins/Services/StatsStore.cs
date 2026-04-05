@@ -141,7 +141,7 @@ namespace HDTplugins.Services
                         var key = Path.GetFileName(dir);
                         var labelPath = Path.Combine(dir, "label.txt");
                         var label = File.Exists(labelPath) ? File.ReadAllText(labelPath, Encoding.UTF8) : null;
-                        map[key] = ArchiveKeyProvider.CreateFromStoredLabel(key, label);
+                        map[key] = ResolveArchiveInfo(key, label, labelPath);
                     }
                     catch { }
                 }
@@ -161,7 +161,7 @@ namespace HDTplugins.Services
         public ArchiveVersionInfo SetArchiveByKey(string archiveKey)
         {
             var info = GetAvailableArchives().FirstOrDefault(x => string.Equals(x.Key, archiveKey, StringComparison.OrdinalIgnoreCase))
-                ?? ArchiveKeyProvider.CreateFromStoredLabel(archiveKey, null);
+                ?? ResolveArchiveInfo(archiveKey, null, null);
             SetArchiveInternal(info);
             return CurrentArchive;
         }
@@ -464,7 +464,7 @@ namespace HDTplugins.Services
                     var key = Path.GetFileName(dir);
                     var labelPath = Path.Combine(dir, "label.txt");
                     var label = File.Exists(labelPath) ? File.ReadAllText(labelPath, Encoding.UTF8) : null;
-                    archives.Add(ArchiveKeyProvider.CreateFromStoredLabel(key, label));
+                    archives.Add(ResolveArchiveInfo(key, label, labelPath));
                 }
                 catch { }
             }
@@ -549,6 +549,55 @@ namespace HDTplugins.Services
             return IsRawGameVersion(normalized)
                 ? _versionDisplayService.MapVersion(normalized)
                 : normalized;
+        }
+
+        private ArchiveVersionInfo ResolveArchiveInfo(string key, string storedLabel, string labelPath)
+        {
+            var info = ArchiveKeyProvider.CreateFromStoredLabel(key, storedLabel);
+            var rawVersion = ExtractRawVersionFromArchive(info);
+            if (string.IsNullOrWhiteSpace(rawVersion))
+                return info;
+
+            var mappedDisplayName = _versionDisplayService.MapVersion(rawVersion);
+            if (string.IsNullOrWhiteSpace(mappedDisplayName))
+                return info;
+
+            info.PatchVersion = rawVersion;
+            if (!string.Equals(info.DisplayName, mappedDisplayName, StringComparison.OrdinalIgnoreCase))
+            {
+                info.DisplayName = mappedDisplayName;
+                TryWriteArchiveLabel(labelPath, mappedDisplayName);
+            }
+
+            return info;
+        }
+
+        private static string ExtractRawVersionFromArchive(ArchiveVersionInfo info)
+        {
+            if (info == null)
+                return null;
+
+            if (!string.IsNullOrWhiteSpace(info.PatchVersion) && IsRawGameVersion(info.PatchVersion))
+                return info.PatchVersion.Trim();
+
+            var key = info.Key ?? string.Empty;
+            if (!key.StartsWith("version_", StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            var rawFromKey = key.Substring("version_".Length).Replace('_', '.');
+            return IsRawGameVersion(rawFromKey) ? rawFromKey : null;
+        }
+
+        private static void TryWriteArchiveLabel(string labelPath, string displayName)
+        {
+            if (string.IsNullOrWhiteSpace(labelPath))
+                return;
+
+            try
+            {
+                File.WriteAllText(labelPath, displayName ?? string.Empty, Encoding.UTF8);
+            }
+            catch { }
         }
 
         private static bool IsRawGameVersion(string value)
