@@ -12,7 +12,9 @@ namespace HDTplugins.Models
         public string HeroName { get; set; }
         public string HeroSkinCardId { get; set; }
         public string InitialHeroPowerCardId { get; set; }
+        public string InitialSecondHeroPowerCardId { get; set; }
         public string HeroPowerCardId { get; set; }
+        public string SecondHeroPowerCardId { get; set; }
 
         public int RatingBefore { get; set; }
         public int RatingAfter { get; set; }

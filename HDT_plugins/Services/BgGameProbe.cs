@@ -43,7 +43,9 @@ namespace HDTplugins.Services
         public string HeroCardId { get; private set; }
         public string HeroSkinCardId { get; private set; }
         public string InitialHeroPowerCardId { get; private set; }
+        public string InitialSecondHeroPowerCardId { get; private set; }
         public string HeroPowerCardId { get; private set; }
+        public string SecondHeroPowerCardId { get; private set; }
         public int[] OfferedHeroDbfIds { get; private set; } = Array.Empty<int>();
         public string[] OfferedHeroCardIds { get; private set; } = Array.Empty<string>();
         public int Placement { get; private set; }
@@ -64,7 +66,9 @@ namespace HDTplugins.Services
             HeroCardId = null;
             HeroSkinCardId = null;
             InitialHeroPowerCardId = null;
+            InitialSecondHeroPowerCardId = null;
             HeroPowerCardId = null;
+            SecondHeroPowerCardId = null;
             Placement = 0;
             OfferedHeroDbfIds = Array.Empty<int>();
             OfferedHeroCardIds = Array.Empty<string>();
@@ -239,14 +243,14 @@ namespace HDTplugins.Services
                 if (!string.IsNullOrEmpty(HeroCardId))
                 {
                     _needResolveHero = false;
-                    HdtLog.Info($"[BGStats] å·²è§£æžè‹±é›„ï¼šHero={HeroCardId}, HeroPower={HeroPowerCardId ?? "null"}");
+                    HdtLog.Info($"[BGStats] Hero resolved: heroCardId={HeroCardId}, heroPowerCardId={HeroPowerCardId ?? "null"}");
                     if (RatingBefore <= 0)
                         RatingBefore = TryGetCurrentBattlegroundsRating() ?? -1;
                 }
             }
             catch (Exception ex)
             {
-                HdtLog.Error("[BGStats] TryResolveHeroAndHeroPower å¤±è´¥: " + ex.Message);
+                HdtLog.Error("[BGStats] TryResolveHeroAndHeroPower failed: " + ex.Message);
             }
         }
 
@@ -255,32 +259,59 @@ namespace HDTplugins.Services
             try
             {
                 var previousHeroPower = HeroPowerCardId;
-                var hpCardId = ResolveHeroPowerCardId(out var source);
-                if (string.IsNullOrEmpty(hpCardId))
+                var previousSecondHeroPower = SecondHeroPowerCardId;
+                var hpCardId = ResolveHeroPowerCardId(out var source, out var debugDetails);
+                var secondHpCardId = ResolveSecondHeroPowerCardId(out var secondSource, out var secondDebugValue);
+                HdtLog.Info($"[BGStats][HeroPower] Refresh probe: previous={previousHeroPower ?? "null"}, previousSecond={previousSecondHeroPower ?? "null"}, playerEntities={debugDetails.PlayerEntities ?? "null"}, playerView={debugDetails.PlayerView ?? "null"}, playerEntity={debugDetails.PlayerEntity ?? "null"}, heroEntity={debugDetails.HeroEntity ?? "null"}, pastHeroPowers={debugDetails.PastHeroPowers ?? "null"}, resolved={hpCardId ?? "null"}, source={source}, secondCandidate={secondDebugValue ?? "null"}, secondResolved={secondHpCardId ?? "null"}, secondSource={secondSource}");
+                if (string.IsNullOrEmpty(hpCardId) && string.IsNullOrEmpty(secondHpCardId))
                 {
-                    HdtLog.Info("[BGStats][HeroPower] æœ¬æ¬¡æœªè¯»å–åˆ°è‹±é›„æŠ€èƒ½");
+                    HdtLog.Info("[BGStats][HeroPower] No hero power card id resolved in this tick");
                     return;
                 }
 
-                HeroPowerCardId = hpCardId;
-                if (string.IsNullOrEmpty(InitialHeroPowerCardId))
+                if (!string.IsNullOrEmpty(hpCardId))
                 {
-                    InitialHeroPowerCardId = hpCardId;
-                    HdtLog.Info($"[BGStats][HeroPower] è®°å½•åˆå§‹è‹±é›„æŠ€èƒ½: {InitialHeroPowerCardId} (source={source})");
+                    HeroPowerCardId = hpCardId;
+                    if (string.IsNullOrEmpty(InitialHeroPowerCardId))
+                    {
+                        InitialHeroPowerCardId = hpCardId;
+                        HdtLog.Info($"[BGStats][HeroPower] Initial hero power captured: cardId={InitialHeroPowerCardId}, source={source}");
+                    }
                 }
 
                 if (!string.Equals(previousHeroPower, HeroPowerCardId, StringComparison.OrdinalIgnoreCase))
-                    HdtLog.Info($"[BGStats][HeroPower] è‹±é›„æŠ€èƒ½æ›´æ–°: {previousHeroPower ?? "null"} -> {HeroPowerCardId} (source={source})");
+                    HdtLog.Info($"[BGStats][HeroPower] Hero power updated: previous={previousHeroPower ?? "null"}, current={HeroPowerCardId}, source={source}");
+
+                SecondHeroPowerCardId = NormalizeSecondHeroPower(HeroPowerCardId, secondHpCardId);
+                if (!string.IsNullOrEmpty(SecondHeroPowerCardId) && string.IsNullOrEmpty(InitialSecondHeroPowerCardId))
+                {
+                    InitialSecondHeroPowerCardId = SecondHeroPowerCardId;
+                    HdtLog.Info($"[BGStats][HeroPower] Initial second hero power captured: cardId={InitialSecondHeroPowerCardId}, source={secondSource}");
+                }
+
+                if (!string.Equals(previousSecondHeroPower, SecondHeroPowerCardId, StringComparison.OrdinalIgnoreCase))
+                    HdtLog.Info($"[BGStats][HeroPower] Second hero power updated: previous={previousSecondHeroPower ?? "null"}, current={SecondHeroPowerCardId ?? "null"}, source={secondSource}");
             }
             catch (Exception ex)
             {
-                HdtLog.Error("[BGStats] TryRefreshHeroPower å¤±è´¥: " + ex.Message);
+                HdtLog.Error("[BGStats] TryRefreshHeroPower failed: " + ex.Message);
             }
         }
 
-        private string ResolveHeroPowerCardId(out string source)
+        private string ResolveHeroPowerCardId(out string source, out HeroPowerProbeDebugInfo debugDetails)
         {
+            debugDetails = new HeroPowerProbeDebugInfo();
+
+            var fromPlayerEntities = GetHeroPowerFromPlayerEntities();
+            debugDetails.PlayerEntities = fromPlayerEntities;
+            if (!string.IsNullOrEmpty(fromPlayerEntities))
+            {
+                source = "Player.PlayerEntities";
+                return fromPlayerEntities;
+            }
+
             var fromPlayerHeroPower = GetHeroPowerFromPlayerView();
+            debugDetails.PlayerView = fromPlayerHeroPower;
             if (!string.IsNullOrEmpty(fromPlayerHeroPower))
             {
                 source = "Player.HeroPower";
@@ -288,6 +319,7 @@ namespace HDTplugins.Services
             }
 
             var fromPlayerEntity = GetHeroPowerFromPlayerEntity();
+            debugDetails.PlayerEntity = fromPlayerEntity;
             if (!string.IsNullOrEmpty(fromPlayerEntity))
             {
                 source = "PlayerEntity.HERO_POWER";
@@ -295,14 +327,75 @@ namespace HDTplugins.Services
             }
 
             var fromHeroEntity = GetHeroPowerFromHeroEntity();
+            debugDetails.HeroEntity = fromHeroEntity;
             if (!string.IsNullOrEmpty(fromHeroEntity))
             {
                 source = "HeroEntity.HERO_POWER";
                 return fromHeroEntity;
             }
 
+            var fromPastHeroPowers = GetHeroPowerFromPastHeroPowers();
+            debugDetails.PastHeroPowers = fromPastHeroPowers;
+            if (!string.IsNullOrEmpty(fromPastHeroPowers))
+            {
+                source = "Player.PastHeroPowers";
+                return fromPastHeroPowers;
+            }
+
             source = "unresolved";
             return null;
+        }
+
+        private sealed class HeroPowerProbeDebugInfo
+        {
+            public string PlayerEntities { get; set; }
+            public string PlayerView { get; set; }
+            public string PlayerEntity { get; set; }
+            public string HeroEntity { get; set; }
+            public string PastHeroPowers { get; set; }
+        }
+
+        private string ResolveSecondHeroPowerCardId(out string source, out string debugValue)
+        {
+            var fromAdditionalEntity = GetSecondHeroPowerFromAdditionalEntityTag();
+            debugValue = fromAdditionalEntity;
+            if (!string.IsNullOrEmpty(fromAdditionalEntity))
+            {
+                source = "Hero.ADDITIONAL_HERO_POWER_ENTITY_1";
+                return fromAdditionalEntity;
+            }
+
+            source = "unresolved";
+            return null;
+        }
+
+        private string GetHeroPowerFromPlayerEntities()
+        {
+            try
+            {
+                var candidates = (Core.Game.Player?.PlayerEntities ?? Enumerable.Empty<dynamic>())
+                    .Where(e => e != null && IsHeroPowerEntity(e))
+                    .Select(e => new
+                    {
+                        CardId = ResolveEntityCardId(e),
+                        IsInPlay = GetBoolProperty(e, "IsInPlay"),
+                        Zone = GetZone(e),
+                        EntityId = GetIntProperty(e, "Id"),
+                        Turn = GetEntityInfoInt(e, "Turn")
+                    })
+                    .Where(x => !string.IsNullOrWhiteSpace(x.CardId))
+                    .OrderByDescending(x => x.IsInPlay)
+                    .ThenByDescending(x => x.Zone == Zone.PLAY)
+                    .ThenByDescending(x => x.Turn)
+                    .ThenByDescending(x => x.EntityId)
+                    .ToList();
+
+                return candidates.FirstOrDefault()?.CardId;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private string GetHeroPowerFromPlayerView()
@@ -310,7 +403,7 @@ namespace HDTplugins.Services
             try
             {
                 var heroPower = GetPropertyValue(Core.Game.Player, "HeroPower");
-                var heroPowerCardId = GetStringProperty(heroPower, "CardId");
+                var heroPowerCardId = ResolveEntityCardId(heroPower);
                 if (!string.IsNullOrEmpty(heroPowerCardId))
                     return heroPowerCardId;
 
@@ -336,7 +429,7 @@ namespace HDTplugins.Services
                     return null;
 
                 var heroPowerEntity = Core.Game.Entities[heroPowerEntityId];
-                var hpCardId = GetStringProperty(heroPowerEntity, "CardId");
+                var hpCardId = ResolveEntityCardId(heroPowerEntity);
                 if (!string.IsNullOrEmpty(hpCardId))
                     return hpCardId;
 
@@ -373,12 +466,64 @@ namespace HDTplugins.Services
                     return null;
 
                 var heroPowerEntity = Core.Game.Entities[heroPowerEntityId];
-                var hpCardId = GetStringProperty(heroPowerEntity, "CardId");
+                var hpCardId = ResolveEntityCardId(heroPowerEntity);
                 if (!string.IsNullOrEmpty(hpCardId))
                     return hpCardId;
 
                 var card = GetPropertyValue(heroPowerEntity, "Card");
                 return GetStringProperty(card, "Id");
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private string GetHeroPowerFromPastHeroPowers()
+        {
+            try
+            {
+                var values = GetPropertyValue(Core.Game.Player, "PastHeroPowers") as System.Collections.IEnumerable;
+                if (values == null)
+                    return null;
+
+                var known = new List<string>();
+                foreach (var value in values)
+                {
+                    var cardId = value?.ToString();
+                    if (!string.IsNullOrWhiteSpace(cardId))
+                        known.Add(cardId);
+                }
+
+                if (known.Count == 0)
+                    return null;
+                if (!string.IsNullOrWhiteSpace(HeroPowerCardId) && known.Contains(HeroPowerCardId, StringComparer.OrdinalIgnoreCase))
+                    return HeroPowerCardId;
+                return known.OrderByDescending(x => x, StringComparer.OrdinalIgnoreCase).FirstOrDefault();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private string GetSecondHeroPowerFromAdditionalEntityTag()
+        {
+            try
+            {
+                var hero = Core.Game.Player?.Hero;
+                if (hero == null)
+                    return null;
+
+                var entityId = hero.GetTag(GameTag.ADDITIONAL_HERO_POWER_ENTITY_1);
+                if (entityId <= 0)
+                    return null;
+
+                var entity = (Core.Game.Player?.PlayerEntities ?? Enumerable.Empty<dynamic>())
+                    .FirstOrDefault(x => x != null && GetIntProperty(x, "Id") == entityId);
+                if (entity == null && Core.Game.Entities != null && Core.Game.Entities.ContainsKey(entityId))
+                    entity = Core.Game.Entities[entityId];
+                return ResolveEntityCardId(entity);
             }
             catch
             {
@@ -529,7 +674,7 @@ namespace HDTplugins.Services
             TryRefreshHeroPower();
             TryCacheFinalBoard();
             _combatSnapshotCapturedThisFight = FinalBoard.Count > 0 || !string.IsNullOrWhiteSpace(HeroPowerCardId);
-            HdtLog.Info($"[BGStats] å·²åœ¨è¿›å…¥æˆ˜æ–—å‰è®°å½•å½“å‰é˜µå®¹ä¸Žè‹±é›„æŠ€èƒ½ï¼Œstep={_lastObservedStep}, boardCount={FinalBoard.Count}, heroPower={HeroPowerCardId ?? "null"}");
+            HdtLog.Info($"[BGStats] Pre-combat snapshot captured: step={_lastObservedStep}, boardCount={FinalBoard.Count}, heroPowerCardId={HeroPowerCardId ?? "null"}");
         }
 
         private void TryCacheFinalBoard()
@@ -756,6 +901,55 @@ namespace HDTplugins.Services
 
             int parsed;
             return value != null && int.TryParse(value.ToString(), out parsed) ? parsed : 0;
+        }
+
+        private bool GetBoolProperty(object target, string propertyName)
+        {
+            var value = GetPropertyValue(target, propertyName);
+            if (value is bool direct)
+                return direct;
+
+            bool parsed;
+            return value != null && bool.TryParse(value.ToString(), out parsed) && parsed;
+        }
+
+        private int GetEntityInfoInt(object entity, string propertyName)
+        {
+            return GetIntProperty(GetPropertyValue(entity, "Info"), propertyName);
+        }
+
+        private string ResolveEntityCardId(object entity)
+        {
+            var direct = GetStringProperty(entity, "CardId");
+            if (!string.IsNullOrWhiteSpace(direct))
+                return direct;
+
+            var latest = GetStringProperty(GetPropertyValue(entity, "Info"), "LatestCardId");
+            if (!string.IsNullOrWhiteSpace(latest))
+                return latest;
+
+            var card = GetPropertyValue(entity, "Card");
+            return GetStringProperty(card, "Id");
+        }
+
+        private bool IsHeroPowerEntity(object entity)
+        {
+            if (entity == null)
+                return false;
+
+            if (GetBoolProperty(entity, "IsHeroPower"))
+                return true;
+
+            return GetIntProperty(entity, "CardType") == (int)CardType.HERO_POWER;
+        }
+
+        private static string NormalizeSecondHeroPower(string primaryHeroPower, string secondHeroPower)
+        {
+            if (string.IsNullOrWhiteSpace(secondHeroPower))
+                return null;
+            if (string.Equals(primaryHeroPower, secondHeroPower, StringComparison.OrdinalIgnoreCase))
+                return null;
+            return secondHeroPower;
         }
         private void TryResolveRatingAfter(long nowTs)
         {

@@ -17,7 +17,7 @@ namespace HDTplugins
         public string Name => Loc.S("Plugin_Name");
         public string Description => Loc.S("Plugin_Description");
         public string Author => "Hank";
-        public Version Version => new Version(0, 10, 1);
+        public Version Version => new Version(0, 10, 6);
         public string ButtonText => Loc.S("Plugin_ButtonText");
         public MenuItem MenuItem => _menuItem;
 
@@ -84,7 +84,7 @@ namespace HDTplugins
 
             if (_probe.HasResolvedHero && !_store.PendingWritten)
             {
-                _store.WritePendingIfNeeded(_probe.HeroCardId, _probe.HeroSkinCardId, _probe.InitialHeroPowerCardId, _probe.RatingBefore);
+                _store.WritePendingIfNeeded(_probe.HeroCardId, _probe.HeroSkinCardId, _probe.InitialHeroPowerCardId, _probe.InitialSecondHeroPowerCardId, _probe.RatingBefore);
             }
 
             if (_store.PendingWritten && _probe.HasResolvedPlacement && _probe.HasResolvedRatingAfter)
@@ -95,7 +95,9 @@ namespace HDTplugins
                     _probe.HeroCardId,
                     _probe.HeroSkinCardId,
                     _probe.InitialHeroPowerCardId,
+                    _probe.InitialSecondHeroPowerCardId,
                     _probe.HeroPowerCardId,
+                    _probe.SecondHeroPowerCardId,
                     _probe.Placement,
                     _probe.RatingBefore,
                     _probe.RatingAfter,
