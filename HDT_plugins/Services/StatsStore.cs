@@ -281,6 +281,34 @@ namespace HDTplugins.Services
             return GetRecordedArchivesInternal();
         }
 
+        public IReadOnlyList<ArchiveDisplayGroup> GetRecordedArchiveDisplayGroups()
+        {
+            var recordedArchives = GetRecordedArchivesInternal();
+            var currentDisplayName = GetArchiveDisplayName(CurrentArchive);
+
+            return recordedArchives
+                .GroupBy(GetArchiveDisplayName, StringComparer.OrdinalIgnoreCase)
+                .Select(group =>
+                {
+                    var archives = group
+                        .OrderByDescending(x => string.Equals(x.Key, CurrentArchive?.Key, StringComparison.OrdinalIgnoreCase))
+                        .ThenByDescending(GetArchiveSortKey)
+                        .ThenByDescending(x => x.DisplayName, StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+
+                    return new ArchiveDisplayGroup
+                    {
+                        DisplayName = group.Key,
+                        RepresentativeArchive = archives.FirstOrDefault(),
+                        Archives = archives
+                    };
+                })
+                .OrderByDescending(x => string.Equals(x.DisplayName, currentDisplayName, StringComparison.OrdinalIgnoreCase))
+                .ThenByDescending(x => GetArchiveSortKey(x.RepresentativeArchive))
+                .ThenByDescending(x => x.DisplayName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
         public ArchiveVersionInfo SetArchiveByKey(string archiveKey)
         {
             var info = GetAvailableArchives().FirstOrDefault(x => string.Equals(x.Key, archiveKey, StringComparison.OrdinalIgnoreCase))
@@ -581,14 +609,24 @@ namespace HDTplugins.Services
         private IReadOnlyList<BgSnapshot> LoadSnapshots()
         {
             var rows = new List<BgSnapshot>();
-            if (string.IsNullOrWhiteSpace(_finalFilePath) || !File.Exists(_finalFilePath))
-                return rows;
-
-            foreach (var line in File.ReadAllLines(_finalFilePath, Encoding.UTF8))
+            var seenMatchIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var finalFilePath in GetSelectedArchiveFinalFilePaths())
             {
-                var snapshot = SafeDeserialize(line);
-                if (snapshot != null && snapshot.Placement > 0)
-                    rows.Add(NormalizeSnapshot(snapshot));
+                if (string.IsNullOrWhiteSpace(finalFilePath) || !File.Exists(finalFilePath))
+                    continue;
+
+                foreach (var line in File.ReadAllLines(finalFilePath, Encoding.UTF8))
+                {
+                    var snapshot = SafeDeserialize(line);
+                    if (snapshot == null || snapshot.Placement <= 0)
+                        continue;
+
+                    snapshot = NormalizeSnapshot(snapshot);
+                    if (!string.IsNullOrWhiteSpace(snapshot.MatchId) && !seenMatchIds.Add(snapshot.MatchId))
+                        continue;
+
+                    rows.Add(snapshot);
+                }
             }
 
             return rows;
@@ -633,6 +671,54 @@ namespace HDTplugins.Services
                 .OrderByDescending(GetArchiveSortKey)
                 .ThenByDescending(x => x.DisplayName, StringComparer.OrdinalIgnoreCase)
                 .FirstOrDefault();
+        }
+
+        private IReadOnlyList<string> GetSelectedArchiveFinalFilePaths()
+        {
+            var selectedArchives = GetSelectedArchivesForCurrentDisplay();
+            if (selectedArchives.Count == 0)
+            {
+                if (!string.IsNullOrWhiteSpace(_finalFilePath))
+                    return new[] { _finalFilePath };
+                return Array.Empty<string>();
+            }
+
+            return selectedArchives
+                .Select(archive =>
+                {
+                    var archiveDir = Path.Combine(_archivesDir ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HDT_BGStats", "Data", "archives"), archive.Key);
+                    EnsureLegacyArchiveMigratedToUnknown(archiveDir);
+                    return GetAccountFinalFilePath(archiveDir, CurrentAccountKey);
+                })
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private IReadOnlyList<ArchiveVersionInfo> GetSelectedArchivesForCurrentDisplay()
+        {
+            var recordedArchives = GetRecordedArchivesInternal();
+            if (recordedArchives.Count == 0)
+                return Array.Empty<ArchiveVersionInfo>();
+
+            if (!string.IsNullOrWhiteSpace(CurrentArchive?.Key))
+            {
+                var exact = recordedArchives.FirstOrDefault(x => string.Equals(x.Key, CurrentArchive.Key, StringComparison.OrdinalIgnoreCase));
+                if (exact != null)
+                {
+                    var selectedDisplayName = GetArchiveDisplayName(exact);
+                    return recordedArchives
+                        .Where(x => string.Equals(GetArchiveDisplayName(x), selectedDisplayName, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                }
+            }
+
+            var currentDisplayName = GetArchiveDisplayName(CurrentArchive);
+            if (string.IsNullOrWhiteSpace(currentDisplayName))
+                return Array.Empty<ArchiveVersionInfo>();
+
+            return recordedArchives
+                .Where(x => string.Equals(GetArchiveDisplayName(x), currentDisplayName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
         }
 
         private ArchiveVersionInfo GetMostRecentRecordedArchive()

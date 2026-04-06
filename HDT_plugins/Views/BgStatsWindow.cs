@@ -1548,20 +1548,22 @@ namespace HDTplugins.Views
         private void OpenVersionMenu()
         {
             var menu = new ContextMenu();
-            var archives = _store.GetRecordedArchives();
-            if (archives.Count == 0)
+            var groups = _store.GetRecordedArchiveDisplayGroups();
+            var currentDisplayName = _store.GetArchiveDisplayName(_store.CurrentArchive);
+            if (groups.Count == 0)
             {
                 menu.Items.Add(new MenuItem { Header = Loc.S("VersionInfo_NoMoreData"), IsEnabled = false });
             }
             else
             {
-                foreach (var archive in archives)
+                foreach (var group in groups)
                 {
+                    var archive = group.RepresentativeArchive;
                     var item = new MenuItem
                     {
-                        Header = _store.GetArchiveDisplayName(archive),
+                        Header = group.DisplayName,
                         IsCheckable = true,
-                        IsChecked = string.Equals(archive.Key, _store.CurrentArchive?.Key, StringComparison.OrdinalIgnoreCase)
+                        IsChecked = string.Equals(group.DisplayName, currentDisplayName, StringComparison.OrdinalIgnoreCase)
                     };
                     item.Click += delegate
                     {
@@ -1758,19 +1760,50 @@ namespace HDTplugins.Views
         private UIElement BuildHeroSection(BgSnapshot snapshot)
         {
             var section = CreateSectionContainer();
-            var stack = new StackPanel { Orientation = Orientation.Vertical };
-            section.Child = stack;
+            var row = new WrapPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            section.Child = row;
 
-            stack.Children.Add(CreateInfoText(Loc.F("MatchDetail_SelectedHeroFormat", GameTextService.GetCardName(snapshot.HeroCardId, snapshot.HeroName))));
-            var initialHeroPowers = (snapshot.InitialHeroPowerCardIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).ToArray();
+            row.Children.Add(CreateInfoText(Loc.F("MatchDetail_SelectedHeroFormat", GameTextService.GetCardName(snapshot.HeroCardId, snapshot.HeroName))));
             var combatHeroPowers = (snapshot.HeroPowerCardIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).ToArray();
+            if (combatHeroPowers.Length > 0)
+            {
+                row.Children.Add(new TextBlock
+                {
+                    Text = Loc.S("MatchDetail_FinalHeroPowerLabel"),
+                    FontSize = 16,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = Brushes.White,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(12, 0, 8, 0)
+                });
 
-            for (var i = 0; i < initialHeroPowers.Length; i++)
-                stack.Children.Add(CreateInfoText(Loc.F("MatchDetail_HeroPowerSlotFormat", Loc.S("MatchDetail_InitialHeroPowerLabel"), i + 1, GameTextService.GetCardName(initialHeroPowers[i], initialHeroPowers[i]))));
-
-            for (var i = 0; i < combatHeroPowers.Length; i++)
-                stack.Children.Add(CreateInfoText(Loc.F("MatchDetail_HeroPowerSlotFormat", Loc.S("MatchDetail_FinalHeroPowerLabel"), i + 1, GameTextService.GetCardName(combatHeroPowers[i], combatHeroPowers[i]))));
+                foreach (var heroPowerCardId in combatHeroPowers)
+                    row.Children.Add(CreateHeroPowerBadge(GameTextService.GetCardName(heroPowerCardId, heroPowerCardId)));
+            }
             return section;
+        }
+
+        private Border CreateHeroPowerBadge(string text)
+        {
+            return new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(124, 154, 201)),
+                CornerRadius = new CornerRadius(4),
+                Margin = new Thickness(0, 0, 8, 0),
+                Padding = new Thickness(10, 4, 10, 4),
+                Child = new TextBlock
+                {
+                    Text = text,
+                    FontSize = 15,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = Brushes.White,
+                    VerticalAlignment = VerticalAlignment.Center
+                }
+            };
         }
 
         private TextBlock CreateInfoText(string text)

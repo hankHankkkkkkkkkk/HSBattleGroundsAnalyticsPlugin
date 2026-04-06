@@ -422,40 +422,64 @@ namespace HDTplugins.Services
 
         private string[] ResolveHeroPowerCardIds(out string source)
         {
-            var results = new List<string>();
-            var sources = new List<string>();
+            var boardHeroPowers = GetHeroPowersFromBoard(out var boardDetail).ToArray();
+            var playerEntityHeroPowers = GetHeroPowersFromPlayerEntityDebug(out var playerEntityDetail).ToArray();
+            var heroEntityHeroPowers = GetHeroPowersFromHeroEntityDebug(out var heroEntityDetail).ToArray();
 
-            AddHeroPowerCandidates(results, sources, GetHeroPowersFromPlayerView(), "PlayerView");
-            AddHeroPowerCandidates(results, sources, GetHeroPowersFromPlayerEntity(), "PlayerEntity");
-            AddHeroPowerCandidates(results, sources, GetHeroPowersFromHeroEntity(), "HeroEntity");
+            HdtLog.Info($"[BGStats][HeroPower][Debug] BoardHeroPowers current=[{string.Join(", ", boardHeroPowers)}]");
+            HdtLog.Info($"[BGStats][HeroPower][Debug] BoardHeroPowers detail={boardDetail}");
+            HdtLog.Info($"[BGStats][HeroPower][Debug] PlayerEntityHeroPowerRefs debug=[{string.Join(", ", playerEntityHeroPowers)}]");
+            HdtLog.Info($"[BGStats][HeroPower][Debug] PlayerEntityHeroPowerRefs detail={playerEntityDetail}");
+            HdtLog.Info($"[BGStats][HeroPower][Debug] HeroEntityHeroPowerRefs debug=[{string.Join(", ", heroEntityHeroPowers)}]");
+            HdtLog.Info($"[BGStats][HeroPower][Debug] HeroEntityHeroPowerRefs detail={heroEntityDetail}");
 
-            var normalized = results
-                .Where(x => !string.IsNullOrWhiteSpace(x))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Take(2)
-                .ToArray();
-
-            source = sources.Count == 0 ? "unresolved" : string.Join("+", sources.Distinct(StringComparer.OrdinalIgnoreCase));
-            return normalized;
+            source = boardHeroPowers.Length > 0 ? "BoardHeroPowers" : "unresolved";
+            HdtLog.Info($"[BGStats][HeroPower][Debug] final stored candidates=[{string.Join(", ", boardHeroPowers)}] source={source}");
+            return boardHeroPowers;
         }
 
-        private IEnumerable<string> GetHeroPowersFromPlayerView()
+        private IEnumerable<string> GetHeroPowersFromBoard(out string detail)
         {
+            detail = "not-started";
             try
             {
                 var results = new List<string>();
-                var heroPowers = GetPropertyValue(Core.Game.Player, "HeroPowers") as System.Collections.IEnumerable;
-                if (heroPowers != null)
+                var boardEntities = Core.Game?.Player?.Board?.Cast<object>()?.ToArray();
+                if (boardEntities == null)
                 {
-                    foreach (var heroPower in heroPowers)
-                        AddHeroPowerCandidate(results, heroPower);
+                    detail = "board=null";
+                    return results;
                 }
 
-                AddHeroPowerCandidate(results, GetPropertyValue(Core.Game.Player, "HeroPower"));
+                var entityDetails = new List<string>();
+                foreach (var entity in boardEntities.OrderBy(x => GetIntProperty(x, "Id")))
+                {
+                    if (entity == null)
+                    {
+                        entityDetails.Add("entity=null");
+                        continue;
+                    }
+
+                    var entityId = GetIntProperty(entity, "Id");
+                    var cardId = GetStringProperty(entity, "CardId");
+                    var cardType = GetCardType(cardId);
+                    var isHeroPower = GetPropertyValue(entity, "IsHeroPower") as bool? ?? cardType == CardType.HERO_POWER;
+                    var zone = GetZone(entity).ToString();
+                    var controllerId = GetNamedTagValue(entity, "CONTROLLER");
+
+                    entityDetails.Add($"id={entityId},card={cardId},type={cardType},zone={zone},controller={controllerId},isHeroPower={isHeroPower}");
+                    if (!isHeroPower)
+                        continue;
+
+                    AddHeroPowerCandidate(results, cardId);
+                }
+
+                detail = $"boardCount={boardEntities.Length}; entities=[{string.Join(" | ", entityDetails)}]";
                 return results;
             }
-            catch
+            catch (Exception ex)
             {
+                detail = "exception=" + ex.Message;
                 return Array.Empty<string>();
             }
         }
@@ -707,59 +731,87 @@ namespace HDTplugins.Services
             }
         }
 
-        private IEnumerable<string> GetHeroPowersFromPlayerEntity()
+        private IEnumerable<string> GetHeroPowersFromPlayerEntityDebug(out string detail)
         {
+            detail = "not-started";
             try
             {
                 var results = new List<string>();
                 var playerEntity = Core.Game.PlayerEntity;
                 if (playerEntity == null)
+                {
+                    detail = "playerEntity=null";
                     return results;
+                }
 
                 var heroPowerEntityId = playerEntity.GetTag(GameTag.HERO_POWER);
                 if (heroPowerEntityId <= 0 || !Core.Game.Entities.ContainsKey(heroPowerEntityId))
+                {
+                    detail = $"tag=HERO_POWER,entityId={heroPowerEntityId},entity-missing";
                     return results;
+                }
 
                 var heroPowerEntity = Core.Game.Entities[heroPowerEntityId];
                 AddHeroPowerCandidate(results, heroPowerEntity);
+                var cardId = GetStringProperty(heroPowerEntity, "CardId");
+                detail = $"tag=HERO_POWER,entityId={heroPowerEntityId},card={cardId},type={GetCardType(cardId)},zone={GetZone(heroPowerEntity)}";
                 return results;
             }
-            catch
+            catch (Exception ex)
             {
+                detail = "exception=" + ex.Message;
                 return Array.Empty<string>();
             }
         }
 
-        private IEnumerable<string> GetHeroPowersFromHeroEntity()
+        private IEnumerable<string> GetHeroPowersFromHeroEntityDebug(out string detail)
         {
+            detail = "not-started";
             try
             {
                 var results = new List<string>();
+                var refDetails = new List<string>();
                 var playerEntity = Core.Game.PlayerEntity;
                 if (playerEntity == null)
+                {
+                    detail = "playerEntity=null";
                     return results;
+                }
 
                 var heroEntityId = playerEntity.GetTag(GameTag.HERO_ENTITY);
                 if (heroEntityId <= 0 || !Core.Game.Entities.ContainsKey(heroEntityId))
+                {
+                    detail = $"heroEntityId={heroEntityId}; heroEntity-missing";
                     return results;
+                }
 
                 var heroEntity = Core.Game.Entities[heroEntityId];
-                var heroPowerEntityId = 0;
-                try
+                foreach (var tag in GetHeroPowerReferenceTags())
                 {
-                    heroPowerEntityId = heroEntity.GetTag(GameTag.HERO_POWER);
+                    var entityId = heroEntity.GetTag(tag);
+                    if (entityId <= 0)
+                    {
+                        refDetails.Add($"tag={tag},entityId=0");
+                        continue;
+                    }
+
+                    if (!Core.Game.Entities.TryGetValue(entityId, out var referencedEntity) || referencedEntity == null)
+                    {
+                        refDetails.Add($"tag={tag},entityId={entityId},entity-missing");
+                        continue;
+                    }
+
+                    var cardId = GetStringProperty(referencedEntity, "CardId");
+                    refDetails.Add($"tag={tag},entityId={entityId},card={cardId},type={GetCardType(cardId)},zone={GetZone(referencedEntity)}");
+                    AddHeroPowerCandidate(results, referencedEntity);
                 }
-                catch { }
 
-                if (heroPowerEntityId <= 0 || !Core.Game.Entities.ContainsKey(heroPowerEntityId))
-                    return results;
-
-                var heroPowerEntity = Core.Game.Entities[heroPowerEntityId];
-                AddHeroPowerCandidate(results, heroPowerEntity);
+                detail = $"heroEntityId={heroEntityId}; refs=[{string.Join(" | ", refDetails)}]";
                 return results;
             }
-            catch
+            catch (Exception ex)
             {
+                detail = "exception=" + ex.Message;
                 return Array.Empty<string>();
             }
         }
@@ -1172,9 +1224,45 @@ namespace HDTplugins.Services
         {
             if (results == null || string.IsNullOrWhiteSpace(cardId))
                 return;
+            cardId = cardId.Trim();
+            if (!IsHeroPowerCardId(cardId))
+                return;
             if (results.Contains(cardId))
                 return;
-            results.Add(cardId.Trim());
+            results.Add(cardId);
+        }
+
+        private static bool IsHeroPowerCardId(string cardId)
+        {
+            return GetCardType(cardId) == CardType.HERO_POWER;
+        }
+
+        private static CardType GetCardType(string cardId)
+        {
+            if (string.IsNullOrWhiteSpace(cardId))
+                return CardType.INVALID;
+
+            try
+            {
+                var dbCard = Cards.All.Values.FirstOrDefault(x => string.Equals(x.Id, cardId, StringComparison.OrdinalIgnoreCase));
+                return dbCard?.Type ?? CardType.INVALID;
+            }
+            catch
+            {
+                return CardType.INVALID;
+            }
+        }
+
+        private static IEnumerable<GameTag> GetHeroPowerReferenceTags()
+        {
+            yield return GameTag.HERO_POWER;
+            yield return GameTag.HERO_POWER_ENTITY;
+
+            foreach (var tag in Enum.GetValues(typeof(GameTag)).Cast<GameTag>().OrderBy(x => x.ToString(), StringComparer.Ordinal))
+            {
+                if (tag.ToString().StartsWith("ADDITIONAL_HERO_POWER_ENTITY_", StringComparison.OrdinalIgnoreCase))
+                    yield return tag;
+            }
         }
 
         private static bool SameCardIdSet(string[] left, string[] right)
