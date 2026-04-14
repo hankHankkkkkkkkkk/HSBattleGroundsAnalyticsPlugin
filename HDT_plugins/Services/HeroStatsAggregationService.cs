@@ -151,8 +151,9 @@ namespace HDTplugins.Services
 
         private static int CountOffered(IReadOnlyList<BgSnapshot> snapshots, string heroCardId)
         {
+            var normalizedHeroCardId = HeroIdNormalizer.Normalize(heroCardId);
             return snapshots.Count(snapshot => HasValidOfferedHeroData(snapshot) && (snapshot.OfferedHeroCardIds ?? Array.Empty<string>())
-                .Any(x => string.Equals(x, heroCardId, StringComparison.OrdinalIgnoreCase)));
+                .Any(x => string.Equals(HeroIdNormalizer.Normalize(x), normalizedHeroCardId, StringComparison.OrdinalIgnoreCase)));
         }
 
         private static bool HasValidOfferedHeroData(BgSnapshot snapshot)

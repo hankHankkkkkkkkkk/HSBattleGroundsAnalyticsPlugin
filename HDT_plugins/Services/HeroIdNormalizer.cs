@@ -20,21 +20,29 @@ namespace HDTplugins.Services
                 var method = type?.GetMethod("GetOriginalHeroId", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(string) }, null);
                 var resolved = method?.Invoke(null, new object[] { heroCardId }) as string;
                 if (!string.IsNullOrWhiteSpace(resolved))
-                    return resolved.Trim();
+                    heroCardId = resolved.Trim();
             }
             catch
             {
             }
 
-            var idx = heroCardId.IndexOf("_SKIN_", StringComparison.OrdinalIgnoreCase);
-            if (idx > 0)
-                return heroCardId.Substring(0, idx);
+            return StripCosmeticSuffix(heroCardId);
+        }
 
-            idx = heroCardId.IndexOf("_ALT_", StringComparison.OrdinalIgnoreCase);
-            if (idx > 0)
-                return heroCardId.Substring(0, idx);
+        private static string StripCosmeticSuffix(string heroCardId)
+        {
+            if (string.IsNullOrWhiteSpace(heroCardId))
+                return string.Empty;
 
-            return heroCardId;
+            var normalized = heroCardId.Trim();
+            foreach (var marker in new[] { "_SKIN_", "_ALT_" })
+            {
+                var idx = normalized.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+                if (idx > 0)
+                    return normalized.Substring(0, idx);
+            }
+
+            return normalized;
         }
     }
 }

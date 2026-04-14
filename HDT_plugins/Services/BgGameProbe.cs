@@ -364,7 +364,7 @@ namespace HDTplugins.Services
 
                 OfferedHeroDbfIds = mergedHeroes;
                 OfferedHeroCardIds = mergedHeroes
-                    .Select(id => NormalizeBgHeroId(Cards.GetFromDbfId(id)?.Id))
+                    .Select(id => Cards.GetFromDbfId(id)?.Id)
                     .Where(id => !string.IsNullOrWhiteSpace(id))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToArray();
@@ -405,7 +405,7 @@ namespace HDTplugins.Services
                 if (!string.IsNullOrEmpty(heroA))
                 {
                     HeroSkinCardId = heroA;
-                    HeroCardId = NormalizeBgHeroId(heroA);
+                    HeroCardId = heroA;
                 }
 
                 if (!string.IsNullOrEmpty(HeroCardId))
@@ -2163,11 +2163,6 @@ namespace HDTplugins.Services
             }
             catch { }
             return null;
-        }
-
-        private string NormalizeBgHeroId(string heroCardId)
-        {
-            return HeroIdNormalizer.Normalize(heroCardId);
         }
 
         private static bool SameArray(int[] a, int[] b)
