@@ -12,6 +12,7 @@ namespace HDTplugins.Services
 {
     public class VersionDisplayService
     {
+        private static readonly HashSet<string> LoggedNewVersions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly JavaScriptSerializer _serializer = new JavaScriptSerializer();
         private const string ResourceName = "HDT_plugins.Tables.version_display_mappings.json";
         private VersionDisplayConfig _config = new VersionDisplayConfig();
@@ -41,7 +42,7 @@ namespace HDTplugins.Services
             return MapVersionInternal(rawVersion, true);
         }
 
-        private string MapVersionInternal(string rawVersion, bool rememberUnknownVersion)
+        private string MapVersionInternal(string rawVersion, bool logUnknownVersion)
         {
             Reload();
             if (string.IsNullOrWhiteSpace(rawVersion))
@@ -55,11 +56,8 @@ namespace HDTplugins.Services
                 return string.IsNullOrWhiteSpace(mapping.DisplayName) ? BuildDefaultDisplayName(normalized) : mapping.DisplayName.Trim();
 
             var inheritedDisplayName = TryBuildDisplayNameFromBaseMapping(normalized, mappings);
-            if (rememberUnknownVersion)
-            {
-                EnsureMapping(normalized, inheritedDisplayName ?? BuildDefaultDisplayName(normalized));
-                Save();
-            }
+            if (logUnknownVersion)
+                LogNewVersionInfo(normalized, inheritedDisplayName ?? BuildDefaultDisplayName(normalized));
             if (!string.IsNullOrWhiteSpace(inheritedDisplayName))
                 return inheritedDisplayName;
 
@@ -76,7 +74,6 @@ namespace HDTplugins.Services
                     : (_serializer.Deserialize<VersionDisplayConfig>(json) ?? new VersionDisplayConfig());
                 _config.Versions = _config.Versions ?? new List<VersionDisplayMapping>();
                 EnsureBuiltInMappings();
-                Save();
             }
             catch (Exception ex)
             {
@@ -87,7 +84,7 @@ namespace HDTplugins.Services
 
         private static string BuildDefaultDisplayName(string rawVersion)
         {
-            return "patch" + rawVersion;
+            return "Patch" + rawVersion;
         }
 
         private string ReadConfigText()
@@ -105,34 +102,6 @@ namespace HDTplugins.Services
             return EmbeddedJsonLoader.ReadRequiredText(ResourceName);
         }
 
-        private void Save()
-        {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(_configFilePath))
-                    return;
-
-                Directory.CreateDirectory(Path.GetDirectoryName(_configFilePath));
-                var ordered = (_config.Versions ?? new List<VersionDisplayMapping>())
-                    .Where(x => !string.IsNullOrWhiteSpace(x.RawVersion))
-                    .OrderByDescending(x => x.RawVersion.Count(c => c == '.'))
-                    .ThenByDescending(x => x.RawVersion, StringComparer.OrdinalIgnoreCase)
-                    .Select(x => new VersionDisplayMapping
-                    {
-                        RawVersion = x.RawVersion?.Trim(),
-                        DisplayName = x.DisplayName?.Trim()
-                    })
-                    .ToList();
-
-                var json = _serializer.Serialize(new VersionDisplayConfig { Versions = ordered });
-                File.WriteAllText(_configFilePath, json, Encoding.UTF8);
-            }
-            catch (Exception ex)
-            {
-                HdtLog.Warn("[BGStats] 保存版本映射文件失败: " + ex.Message);
-            }
-        }
-
         private static string TryBuildDisplayNameFromBaseMapping(string rawVersion, IEnumerable<VersionDisplayMapping> mappings)
         {
             if (string.IsNullOrWhiteSpace(rawVersion) || mappings == null)
@@ -148,12 +117,22 @@ namespace HDTplugins.Services
             if (baseMapping == null)
                 return null;
 
-            var baseRawVersion = baseMapping.RawVersion.Trim();
             var baseDisplayName = baseMapping.DisplayName.Trim();
-            if (baseDisplayName.EndsWith(baseRawVersion, StringComparison.OrdinalIgnoreCase))
-                return baseDisplayName.Substring(0, baseDisplayName.Length - baseRawVersion.Length) + normalized;
+            return string.IsNullOrWhiteSpace(baseDisplayName) ? null : baseDisplayName;
+        }
 
-            return null;
+        private static void LogNewVersionInfo(string rawVersion, string displayName)
+        {
+            if (string.IsNullOrWhiteSpace(rawVersion))
+                return;
+
+            lock (LoggedNewVersions)
+            {
+                if (!LoggedNewVersions.Add(rawVersion.Trim()))
+                    return;
+            }
+
+            HdtLog.Info($"[BGStats][检测到新版本信息] rawVersion={rawVersion} displayName={displayName}");
         }
 
         private void EnsureBuiltInMappings()
@@ -161,16 +140,20 @@ namespace HDTplugins.Services
             if (_config.Versions == null)
                 _config.Versions = new List<VersionDisplayMapping>();
 
-            EnsureMapping("35.0", "season12 patch35.0");
-            EnsureMapping("34.6", "season12 patch34.6");
-            EnsureMapping("33.2", "season11 patch33.2");
-            EnsureMapping("2022.3", "season12 patch35.0");
+            EnsureMapping("35.0", "Season12 Patch35.0");
+            EnsureMapping("34.6", "Season12 Patch34.6");
+            EnsureMapping("33.2", "Season11 Patch33.2");
+            EnsureMapping("2022.3", "Season12 Patch35.0");
         }
 
         private void EnsureMapping(string rawVersion, string displayName)
         {
-            if (_config.Versions.Any(x => string.Equals(x.RawVersion, rawVersion, StringComparison.OrdinalIgnoreCase)))
+            var existing = _config.Versions.FirstOrDefault(x => string.Equals(x.RawVersion, rawVersion, StringComparison.OrdinalIgnoreCase));
+            if (existing != null)
+            {
+                existing.DisplayName = displayName;
                 return;
+            }
 
             _config.Versions.Add(new VersionDisplayMapping
             {
