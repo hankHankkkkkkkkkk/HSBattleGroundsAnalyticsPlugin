@@ -309,7 +309,7 @@ namespace HDTplugins.Services
 
             var rawVersion = GetArchiveRawVersion(archive);
             if (!string.IsNullOrWhiteSpace(rawVersion))
-                return _versionDisplayService.MapVersion(rawVersion);
+                return _versionDisplayService.RememberAndMapVersion(rawVersion);
 
             return archive.DisplayName ?? string.Empty;
         }
@@ -319,7 +319,7 @@ namespace HDTplugins.Services
             if (string.IsNullOrWhiteSpace(rawVersion))
                 return string.Empty;
 
-            return _versionDisplayService.MapVersion(rawVersion);
+            return _versionDisplayService.RememberAndMapVersion(rawVersion);
         }
 
         public ArchiveVersionInfo RefreshLatestRecordedArchiveForDisplay()
@@ -382,30 +382,42 @@ namespace HDTplugins.Services
 
         public bool UpdateManualTags(string matchId, IReadOnlyCollection<string> manualTags)
         {
-            if (string.IsNullOrWhiteSpace(matchId) || string.IsNullOrWhiteSpace(_finalFilePath) || !File.Exists(_finalFilePath))
+            if (string.IsNullOrWhiteSpace(matchId))
                 return false;
 
             try
             {
-                var lines = File.ReadAllLines(_finalFilePath, Encoding.UTF8);
-                var changed = false;
-                for (var i = 0; i < lines.Length; i++)
+                var candidateFiles = GetSelectedArchiveFinalFilePaths()
+                    .Concat(new[] { _finalFilePath })
+                    .Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                foreach (var finalFilePath in candidateFiles)
                 {
-                    var snapshot = SafeDeserialize(lines[i]);
-                    if (snapshot == null || !string.Equals(snapshot.MatchId, matchId, StringComparison.OrdinalIgnoreCase))
+                    var lines = File.ReadAllLines(finalFilePath, Encoding.UTF8);
+                    var changed = false;
+                    for (var i = 0; i < lines.Length; i++)
+                    {
+                        var snapshot = SafeDeserialize(lines[i]);
+                        if (snapshot == null || !string.Equals(snapshot.MatchId, matchId, StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        snapshot.ManualTags = SanitizeTags(manualTags, 5).ToList();
+                        lines[i] = _serializer.Serialize(snapshot);
+                        changed = true;
+                        break;
+                    }
+
+                    if (!changed)
                         continue;
 
-                    snapshot.ManualTags = SanitizeTags(manualTags, 5).ToList();
-                    lines[i] = _serializer.Serialize(snapshot);
-                    changed = true;
-                    break;
+                    File.WriteAllLines(finalFilePath, lines, Encoding.UTF8);
+                    return true;
                 }
 
-                if (!changed)
-                    return false;
-
-                File.WriteAllLines(_finalFilePath, lines, Encoding.UTF8);
-                return true;
+                HdtLog.Warn("[BGStats] UpdateManualTags 未找到匹配对局: " + matchId);
+                return false;
             }
             catch (Exception ex)
             {
@@ -553,14 +565,19 @@ namespace HDTplugins.Services
             if (latestRecorded != null)
                 return latestRecorded;
 
-            return preferred ?? ArchiveKeyProvider.GetDefaultArchive();
+            return preferred ?? new ArchiveVersionInfo
+            {
+                Key = "unknown_version",
+                DisplayName = "unknown version",
+                PatchVersion = string.Empty
+            };
         }
 
         private ArchiveVersionInfo ResolveBestArchiveForCurrentVersion()
         {
-            var detected = ArchiveKeyProvider.ResolveCurrentArchive(null);
+            var detected = ArchiveKeyProvider.ResolveCurrentArchive(_versionDisplayService.RememberAndMapVersion);
             if (detected == null)
-                return ArchiveKeyProvider.GetDefaultArchive();
+                return null;
 
             var recorded = GetRecordedArchivesInternal();
             var exact = recorded.FirstOrDefault(x => string.Equals(x.Key, detected.Key, StringComparison.OrdinalIgnoreCase));
@@ -581,17 +598,75 @@ namespace HDTplugins.Services
         private IReadOnlyList<BgSnapshot> LoadSnapshots()
         {
             var rows = new List<BgSnapshot>();
-            if (string.IsNullOrWhiteSpace(_finalFilePath) || !File.Exists(_finalFilePath))
-                return rows;
-
-            foreach (var line in File.ReadAllLines(_finalFilePath, Encoding.UTF8))
+            var seenMatchIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var finalFilePath in GetSelectedArchiveFinalFilePaths())
             {
-                var snapshot = SafeDeserialize(line);
-                if (snapshot != null && snapshot.Placement > 0)
-                    rows.Add(NormalizeSnapshot(snapshot));
+                if (string.IsNullOrWhiteSpace(finalFilePath) || !File.Exists(finalFilePath))
+                    continue;
+
+                foreach (var line in File.ReadAllLines(finalFilePath, Encoding.UTF8))
+                {
+                    var snapshot = SafeDeserialize(line);
+                    if (snapshot == null || snapshot.Placement <= 0)
+                        continue;
+
+                    snapshot = NormalizeSnapshot(snapshot);
+                    if (!string.IsNullOrWhiteSpace(snapshot.MatchId) && !seenMatchIds.Add(snapshot.MatchId))
+                        continue;
+
+                    rows.Add(snapshot);
+                }
             }
 
             return rows;
+        }
+
+        private IReadOnlyList<string> GetSelectedArchiveFinalFilePaths()
+        {
+            var selectedArchives = GetSelectedArchivesForCurrentDisplay();
+            if (selectedArchives.Count == 0)
+            {
+                if (!string.IsNullOrWhiteSpace(_finalFilePath))
+                    return new[] { _finalFilePath };
+                return Array.Empty<string>();
+            }
+
+            return selectedArchives
+                .Select(archive =>
+                {
+                    var archiveDir = Path.Combine(_archivesDir ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HDT_BGStats", "Data", "archives"), archive.Key);
+                    EnsureLegacyArchiveMigratedToUnknown(archiveDir);
+                    return GetAccountFinalFilePath(archiveDir, CurrentAccountKey);
+                })
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private IReadOnlyList<ArchiveVersionInfo> GetSelectedArchivesForCurrentDisplay()
+        {
+            var recordedArchives = GetRecordedArchivesInternal();
+            if (recordedArchives.Count == 0)
+                return Array.Empty<ArchiveVersionInfo>();
+
+            if (!string.IsNullOrWhiteSpace(CurrentArchive?.Key))
+            {
+                var exact = recordedArchives.FirstOrDefault(x => string.Equals(x.Key, CurrentArchive.Key, StringComparison.OrdinalIgnoreCase));
+                if (exact != null)
+                {
+                    var selectedDisplayName = GetArchiveDisplayName(exact);
+                    return recordedArchives
+                        .Where(x => string.Equals(GetArchiveDisplayName(x), selectedDisplayName, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                }
+            }
+
+            var currentDisplayName = GetArchiveDisplayName(CurrentArchive);
+            if (string.IsNullOrWhiteSpace(currentDisplayName))
+                return Array.Empty<ArchiveVersionInfo>();
+
+            return recordedArchives
+                .Where(x => string.Equals(GetArchiveDisplayName(x), currentDisplayName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
         }
 
         private List<ArchiveVersionInfo> GetRecordedArchivesInternal()

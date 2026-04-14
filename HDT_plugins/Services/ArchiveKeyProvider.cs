@@ -6,6 +6,8 @@ using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 
+using HdtLog = Hearthstone_Deck_Tracker.Utility.Logging.Log;
+
 namespace HDTplugins.Services
 {
     public static class ArchiveKeyProvider
@@ -29,28 +31,27 @@ namespace HDTplugins.Services
 
         public static ArchiveVersionInfo ResolveCurrentArchive(Func<string, string> mapDisplayName)
         {
-            var detectedPatch = TryDetectHearthstonePatchVersion();
-            if (string.IsNullOrEmpty(detectedPatch))
-                return GetDefaultArchive();
+            var detectedRawVersion = NormalizeRawVersion(TryDetectHearthstonePatchVersion());
+            if (string.IsNullOrEmpty(detectedRawVersion))
+                return null;
 
-            if (!IsReasonablePatchVersion(detectedPatch))
-                return GetDefaultArchive();
-
-            var matched = KnownArchives.FirstOrDefault(x => detectedPatch.StartsWith(x.PatchVersion, StringComparison.OrdinalIgnoreCase));
+            var displayName = mapDisplayName?.Invoke(detectedRawVersion) ?? detectedRawVersion;
+            var matched = KnownArchives.FirstOrDefault(x => detectedRawVersion.StartsWith(x.PatchVersion, StringComparison.OrdinalIgnoreCase));
             if (matched != null)
             {
                 var info = Clone(matched);
-                info.DisplayName = detectedPatch;
-                info.Key = BuildArchiveKeyFromRawVersion(detectedPatch, info.DisplayName);
+                info.DisplayName = displayName;
+                info.Key = BuildArchiveKeyFromRawVersion(detectedRawVersion, info.DisplayName);
+                info.PatchVersion = detectedRawVersion;
                 info.IsDetected = true;
                 return info;
             }
 
             return new ArchiveVersionInfo
             {
-                Key = BuildArchiveKeyFromRawVersion(detectedPatch, detectedPatch),
-                DisplayName = detectedPatch,
-                PatchVersion = detectedPatch,
+                Key = BuildArchiveKeyFromRawVersion(detectedRawVersion, displayName),
+                DisplayName = displayName,
+                PatchVersion = detectedRawVersion,
                 IsDetected = true
             };
         }
@@ -115,47 +116,71 @@ namespace HDTplugins.Services
                 {
                     try
                     {
+                        var processName = SafeProcessName(process);
+                        if (!string.Equals(processName, "Hearthstone", StringComparison.OrdinalIgnoreCase))
+                        {
+                            HdtLog.Info($"[BGStats][VersionDebug] process={processName} skipped=process-name");
+                            continue;
+                        }
+
                         var modulePath = process.MainModule?.FileName;
                         if (string.IsNullOrWhiteSpace(modulePath) || !File.Exists(modulePath))
+                        {
+                            HdtLog.Info($"[BGStats][VersionDebug] process={processName} modulePath=<missing> skipped=module-missing");
                             continue;
+                        }
+
+                        if (!string.Equals(Path.GetFileName(modulePath), "Hearthstone.exe", StringComparison.OrdinalIgnoreCase))
+                        {
+                            HdtLog.Info($"[BGStats][VersionDebug] process={processName} modulePath={modulePath} skipped=module-name");
+                            continue;
+                        }
 
                         var fileVersion = FileVersionInfo.GetVersionInfo(modulePath);
-                        var patch = NormalizePatchVersion(fileVersion.ProductVersion ?? fileVersion.FileVersion);
+                        var productVersion = fileVersion.ProductVersion;
+                        var fileVersionText = fileVersion.FileVersion;
+                        var productPatch = NormalizeRawVersion(productVersion);
+                        var filePatch = NormalizeRawVersion(fileVersionText);
+                        var selectedSource = !string.IsNullOrWhiteSpace(productVersion) ? "ProductVersion" : "FileVersion";
+                        var selectedRaw = productVersion ?? fileVersionText;
+                        var patch = NormalizeRawVersion(selectedRaw);
+                        LogVersionHitIfInteresting("ProductVersion", process, modulePath, productVersion, productPatch);
+                        LogVersionHitIfInteresting("FileVersion", process, modulePath, fileVersionText, filePatch);
+                        LogVersionHitIfInteresting(selectedSource + "(selected)", process, modulePath, selectedRaw, patch);
+
+                        HdtLog.Info(
+                            $"[BGStats][VersionDebug] process={processName}"
+                            + $" modulePath={modulePath}"
+                            + $" productVersionRaw={productVersion ?? "<null>"}"
+                            + $" productVersionPatch={productPatch ?? "<null>"}"
+                            + $" fileVersionRaw={fileVersionText ?? "<null>"}"
+                            + $" fileVersionPatch={filePatch ?? "<null>"}"
+                            + $" selectedSource={selectedSource}"
+                            + $" selectedRaw={selectedRaw ?? "<null>"}"
+                            + $" selectedPatch={patch ?? "<null>"}");
                         if (!string.IsNullOrWhiteSpace(patch))
                             return patch;
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        HdtLog.Info($"[BGStats][VersionDebug] process={SafeProcessName(process)} detect-failed={ex.Message}");
+                    }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                HdtLog.Info("[BGStats][VersionDebug] enumerate-process-failed=" + ex.Message);
+            }
 
             return null;
         }
 
-        private static string NormalizePatchVersion(string rawVersion)
+        private static string NormalizeRawVersion(string rawVersion)
         {
             if (string.IsNullOrWhiteSpace(rawVersion))
                 return null;
 
-            var match = Regex.Match(rawVersion, "(\\d+\\.\\d+)");
-            return match.Success ? match.Groups[1].Value : null;
-        }
-
-        private static bool IsReasonablePatchVersion(string patchVersion)
-        {
-            var parts = patchVersion.Split('.');
-            if (parts.Length < 2)
-                return false;
-
-            int major;
-            int minor;
-            if (!int.TryParse(parts[0], out major) || !int.TryParse(parts[1], out minor))
-                return false;
-
-            if (major < 30)
-                return false;
-
-            return minor >= 0;
+            return rawVersion.Trim();
         }
 
         private static ArchiveVersionInfo Clone(ArchiveVersionInfo source)
@@ -167,6 +192,36 @@ namespace HDTplugins.Services
                 PatchVersion = source.PatchVersion,
                 IsDetected = source.IsDetected
             };
+        }
+
+        private static string SafeProcessName(Process process)
+        {
+            try
+            {
+                return process?.ProcessName ?? "<null>";
+            }
+            catch
+            {
+                return "<unavailable>";
+            }
+        }
+
+        private static void LogVersionHitIfInteresting(string source, Process process, string modulePath, string rawVersion, string normalizedPatch)
+        {
+            if (string.IsNullOrWhiteSpace(normalizedPatch))
+                return;
+
+            var is35 = normalizedPatch.IndexOf("35.0", StringComparison.OrdinalIgnoreCase) >= 0;
+            var is20223 = normalizedPatch.IndexOf("2022.3", StringComparison.OrdinalIgnoreCase) >= 0;
+            if (!is35 && !is20223)
+                return;
+
+            HdtLog.Info(
+                $"[BGStats][VersionDebug][HIT] normalizedPatch={normalizedPatch}"
+                + $" source={source}"
+                + $" process={SafeProcessName(process)}"
+                + $" modulePath={modulePath ?? "<null>"}"
+                + $" rawVersion={rawVersion ?? "<null>"}");
         }
     }
 }
