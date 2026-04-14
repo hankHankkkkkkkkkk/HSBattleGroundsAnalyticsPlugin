@@ -37,6 +37,8 @@ namespace HDTplugins.Services
         private long _nextAccountResolveTs;
         private long _nextAccountResolveLogTs;
         private string[] _currentHeroPowerCardIds = Array.Empty<string>();
+        private const string MarinHeroPowerCardId = "BG30_HERO_304p";
+        private const string ButtonsHeroPowerCardId = "BG32_HERO_002p";
 
         private const int RatingResolveTimeoutMs = 45_000;
         private const int RatingPollMs = 500;
@@ -70,6 +72,12 @@ namespace HDTplugins.Services
         public string[] AvailableRaceNames { get; private set; } = Array.Empty<string>();
         public int AnomalyDbfId { get; private set; }
         public string AnomalyCardId { get; private set; }
+        public string[] LesserTrinketOptionCardIds { get; private set; } = Array.Empty<string>();
+        public string LesserTrinketCardId { get; private set; }
+        public string[] GreaterTrinketOptionCardIds { get; private set; } = Array.Empty<string>();
+        public string GreaterTrinketCardId { get; private set; }
+        public string HeroPowerTrinketCardId { get; private set; }
+        public string HeroPowerTrinketType { get; private set; }
         public List<BgBoardMinionSnapshot> FinalBoard { get; private set; } = new List<BgBoardMinionSnapshot>();
         public List<BgTavernUpgradePoint> TavernUpgradeTimeline { get; private set; } = new List<BgTavernUpgradePoint>();
         public bool HasResolvedRatingAfter => RatingAfter > 0 && !_needResolveRatingAfter;
@@ -112,6 +120,12 @@ namespace HDTplugins.Services
             AvailableRaceNames = Array.Empty<string>();
             AnomalyDbfId = 0;
             AnomalyCardId = null;
+            LesserTrinketOptionCardIds = Array.Empty<string>();
+            LesserTrinketCardId = null;
+            GreaterTrinketOptionCardIds = Array.Empty<string>();
+            GreaterTrinketCardId = null;
+            HeroPowerTrinketCardId = null;
+            HeroPowerTrinketType = null;
             FinalBoard = new List<BgBoardMinionSnapshot>();
             TavernUpgradeTimeline = new List<BgTavernUpgradePoint>();
             _lastRecordedTavernTier = -1;
@@ -140,6 +154,7 @@ namespace HDTplugins.Services
             {
                 TryResolveHeroAndHeroPower();
                 TryRefreshHeroPower();
+                TryRefreshTrinkets();
                 TryCacheFinalBoard();
                 HdtLog.Info($"[BGStats][HeroPower] finalize snapshot hero={HeroCardId ?? "null"} initial=[{string.Join(", ", InitialHeroPowerCardIds)}] combat=[{string.Join(", ", HeroPowerCardIds)}] current=[{string.Join(", ", _currentHeroPowerCardIds)}] boardCount={FinalBoard?.Count ?? 0}");
             }
@@ -180,6 +195,7 @@ namespace HDTplugins.Services
             TryCacheAnomaly();
             TryUpdateTurnScopedSnapshots();
             TryCapturePreCombatSnapshot();
+            TryRefreshTrinkets();
             if (_needResolveAccountContext)
                 TryResolveAccountContext();
 
@@ -909,6 +925,112 @@ namespace HDTplugins.Services
             {
                 HdtLog.Error("[BGStats] TryCacheAnomaly å¤±è´¥: " + ex.Message);
             }
+        }
+
+        private void TryRefreshTrinkets()
+        {
+            try
+            {
+                TryCacheSelectedTrinkets();
+                TryCacheTrinketOptions();
+            }
+            catch (Exception ex)
+            {
+                HdtLog.Error("[BGStats] TryRefreshTrinkets failed: " + ex.Message);
+            }
+        }
+
+        private void TryCacheSelectedTrinkets()
+        {
+            var playerEntity = Core.Game?.PlayerEntity;
+            if (playerEntity == null)
+                return;
+
+            LesserTrinketCardId = ResolveCardIdFromDbfTag(playerEntity, "BACON_FIRST_TRINKET_DATABASE_ID") ?? LesserTrinketCardId;
+            GreaterTrinketCardId = ResolveCardIdFromDbfTag(playerEntity, "BACON_SECOND_TRINKET_DATABASE_ID") ?? GreaterTrinketCardId;
+
+            var heroPowerTrinket = ResolveCardIdFromDbfTag(playerEntity, "BACON_HEROPOWER_TRINKET_DATABASE_ID");
+            if (!string.IsNullOrWhiteSpace(heroPowerTrinket))
+                HeroPowerTrinketCardId = heroPowerTrinket;
+
+            var heroPowerType = ResolveHeroPowerTrinketType();
+            if (!string.IsNullOrWhiteSpace(heroPowerType))
+                HeroPowerTrinketType = heroPowerType;
+        }
+
+        private void TryCacheTrinketOptions()
+        {
+            var round = ConvertTurnToRound(Core.Game?.GameEntity?.GetTag(GameTag.TURN) ?? 0);
+            if (round <= 0)
+                return;
+
+            var options = GetPotentialTrinketCardIds();
+            if (options.Length == 0)
+                return;
+
+            if (round <= 5 && LesserTrinketOptionCardIds.Length == 0)
+            {
+                LesserTrinketOptionCardIds = options;
+                HdtLog.Info($"[BGStats][Trinket] lesser options=[{string.Join(", ", LesserTrinketOptionCardIds)}]");
+                return;
+            }
+
+            if (round >= 8 && GreaterTrinketOptionCardIds.Length == 0)
+            {
+                GreaterTrinketOptionCardIds = options;
+                HdtLog.Info($"[BGStats][Trinket] greater options=[{string.Join(", ", GreaterTrinketOptionCardIds)}]");
+            }
+        }
+
+        private string[] GetPotentialTrinketCardIds()
+        {
+            try
+            {
+                return Core.Game?.Entities?.Values
+                    .Where(entity => entity != null && GetNamedTagValue(entity, "BACON_IS_POTENTIAL_TRINKET") > 0)
+                    .Select(entity => entity.CardId)
+                    .Where(cardId => !string.IsNullOrWhiteSpace(cardId) && GetCardType(cardId) == CardType.BATTLEGROUND_TRINKET)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Take(4)
+                    .ToArray() ?? Array.Empty<string>();
+            }
+            catch
+            {
+                return Array.Empty<string>();
+            }
+        }
+
+        private string ResolveCardIdFromDbfTag(dynamic entity, string tagName)
+        {
+            var dbfId = GetNamedTagValue(entity, tagName);
+            if (dbfId <= 0)
+                return null;
+
+            try
+            {
+                return Cards.GetFromDbfId(dbfId)?.Id;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private string ResolveHeroPowerTrinketType()
+        {
+            var heroPowerIds = (_currentHeroPowerCardIds ?? Array.Empty<string>())
+                .Concat(HeroPowerCardIds ?? Array.Empty<string>())
+                .Concat(InitialHeroPowerCardIds ?? Array.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (heroPowerIds.Contains(MarinHeroPowerCardId, StringComparer.OrdinalIgnoreCase))
+                return "lesser";
+            if (heroPowerIds.Contains(ButtonsHeroPowerCardId, StringComparer.OrdinalIgnoreCase))
+                return "greater";
+
+            return null;
         }
 
         private void TryUpdateTurnScopedSnapshots()

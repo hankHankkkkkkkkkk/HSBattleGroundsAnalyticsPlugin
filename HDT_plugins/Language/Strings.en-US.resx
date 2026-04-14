@@ -444,4 +444,106 @@
   <data name="RaceStats_HeaderAvgPlacement" xml:space="preserve">
     <value>Avg Placement</value>
   </data>
+  <data name="RaceStats_HeaderPickRate" xml:space="preserve">
+    <value>Pick Rate</value>
+  </data>
+  <data name="TavernTempo_PageTitle" xml:space="preserve">
+    <value>Tavern Tempo</value>
+  </data>
+  <data name="TavernTempo_SummaryFormat" xml:space="preserve">
+    <value>Matches: {0}  Overall Avg Placement: {1}  Score line: {2}</value>
+  </data>
+  <data name="TavernTempo_SummaryEmpty" xml:space="preserve">
+    <value>Matches: 0  Overall Avg Placement: -</value>
+  </data>
+  <data name="TavernTempo_TierHeaderFormat" xml:space="preserve">
+    <value>Upgrade to Tavern Tier {0}</value>
+  </data>
+  <data name="TavernTempo_HeaderBucket" xml:space="preserve">
+    <value>Timing</value>
+  </data>
+  <data name="TavernTempo_HeaderRate" xml:space="preserve">
+    <value>Share</value>
+  </data>
+  <data name="TavernTempo_HeaderVsOverall" xml:space="preserve">
+    <value>Vs Overall</value>
+  </data>
+  <data name="TavernTempo_Tier3_BeforeTurn3" xml:space="preserve">
+    <value>Before turn 3</value>
+  </data>
+  <data name="TavernTempo_Tier3_Turn3" xml:space="preserve">
+    <value>Turn 3</value>
+  </data>
+  <data name="TavernTempo_Tier3_Turn4" xml:space="preserve">
+    <value>Turn 4</value>
+  </data>
+  <data name="TavernTempo_Tier3_Turn5" xml:space="preserve">
+    <value>Turn 5</value>
+  </data>
+  <data name="TavernTempo_Tier3_AfterTurn5" xml:space="preserve">
+    <value>After turn 5</value>
+  </data>
+  <data name="TavernTempo_Tier4_Turn4" xml:space="preserve">
+    <value>Turn 4</value>
+  </data>
+  <data name="TavernTempo_Tier4_Turn5" xml:space="preserve">
+    <value>Turn 5</value>
+  </data>
+  <data name="TavernTempo_Tier4_Turn6" xml:space="preserve">
+    <value>Turn 6</value>
+  </data>
+  <data name="TavernTempo_Tier4_AfterTurn6" xml:space="preserve">
+    <value>After turn 6</value>
+  </data>
+  <data name="TavernTempo_Tier5_Turn6" xml:space="preserve">
+    <value>Turn 6</value>
+  </data>
+  <data name="TavernTempo_Tier5_Turn7" xml:space="preserve">
+    <value>Turn 7</value>
+  </data>
+  <data name="TavernTempo_Tier5_AfterTurn7" xml:space="preserve">
+    <value>After turn 7</value>
+  </data>
+  <data name="Common_FirstRateLabel" xml:space="preserve">
+    <value>First Rate</value>
+  </data>
+  <data name="Common_ScoreRateLabel" xml:space="preserve">
+    <value>Score Rate</value>
+  </data>
+  <data name="TrinketStats_PageTitle" xml:space="preserve">
+    <value>Trinket Stats</value>
+  </data>
+  <data name="TrinketStats_SummaryEmpty" xml:space="preserve">
+    <value>No trinket data available yet.</value>
+  </data>
+  <data name="TrinketStats_SummaryFormat" xml:space="preserve">
+    <value>{0} matches in current range, score line {1}.</value>
+  </data>
+  <data name="TrinketStats_FilterAll" xml:space="preserve">
+    <value>All Trinkets</value>
+  </data>
+  <data name="TrinketStats_FilterLesser" xml:space="preserve">
+    <value>Lesser Trinkets</value>
+  </data>
+  <data name="TrinketStats_FilterGreater" xml:space="preserve">
+    <value>Greater Trinkets</value>
+  </data>
+  <data name="TrinketStats_HeaderName" xml:space="preserve">
+    <value>Trinket</value>
+  </data>
+  <data name="TrinketStats_HeaderPickRate" xml:space="preserve">
+    <value>Pick Rate</value>
+  </data>
+  <data name="MatchDetail_TrinketSection" xml:space="preserve">
+    <value>Trinkets</value>
+  </data>
+  <data name="MatchDetail_LesserTrinketLabel" xml:space="preserve">
+    <value>Lesser Trinket</value>
+  </data>
+  <data name="MatchDetail_GreaterTrinketLabel" xml:space="preserve">
+    <value>Greater Trinket</value>
+  </data>
+  <data name="MatchDetail_HeroPowerTrinketLabel" xml:space="preserve">
+    <value>Hero Power Trinket</value>
+  </data>
 </root>
