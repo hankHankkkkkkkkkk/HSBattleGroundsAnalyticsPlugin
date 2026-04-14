@@ -115,7 +115,7 @@
     <value>Version</value>
   </data>
   <data name="VersionInfo_DefaultDisplay" xml:space="preserve">
-    <value>season12 patch35.0</value>
+    <value>Version not detected</value>
   </data>
   <data name="VersionInfo_NoMoreData" xml:space="preserve">
     <value>No additional version data</value>
@@ -489,5 +489,32 @@
   </data>
   <data name="MatchDetail_HeroPowerTrinketLabel" xml:space="preserve">
     <value>Hero Power Trinket</value>
+  </data>
+  <data name="TimewarpStats_PageTitle" xml:space="preserve">
+    <value>Timewarp Stats</value>
+  </data>
+  <data name="TimewarpStats_FilterAll" xml:space="preserve">
+    <value>All Timewarp Cards</value>
+  </data>
+  <data name="TimewarpStats_FilterMajor" xml:space="preserve">
+    <value>Major Timewarp</value>
+  </data>
+  <data name="TimewarpStats_FilterMinor" xml:space="preserve">
+    <value>Minor Timewarp</value>
+  </data>
+  <data name="TimewarpStats_HeaderName" xml:space="preserve">
+    <value>Card</value>
+  </data>
+  <data name="TimewarpStats_HeaderAppearanceRate" xml:space="preserve">
+    <value>Appearance Rate</value>
+  </data>
+  <data name="TimewarpStats_HeaderPickRate" xml:space="preserve">
+    <value>Pick Rate</value>
+  </data>
+  <data name="QuestStats_PageTitle" xml:space="preserve">
+    <value>Quest Stats</value>
+  </data>
+  <data name="QuestStats_Empty" xml:space="preserve">
+    <value>Quest data UI is ready. Business logic will be added later.</value>
   </data>
 </root>

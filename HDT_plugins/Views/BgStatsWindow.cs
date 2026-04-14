@@ -55,7 +55,9 @@ namespace HDTplugins.Views
         private enum MatchStatsPage
         {
             TavernTempo,
-            Trinkets
+            Trinkets,
+            Timewarp,
+            Quests
         }
 
         private readonly StatsStore _store;
@@ -86,6 +88,7 @@ namespace HDTplugins.Views
         private string _expandedHeroCardId;
         private MatchStatsPage _currentMatchStatsPage = MatchStatsPage.TavernTempo;
         private TrinketFilter _currentTrinketFilter = TrinketFilter.All;
+        private TimewarpFilter _currentTimewarpFilter = TimewarpFilter.All;
         private DateTime _anchorDate = DateTime.Today;
         private static readonly Brush PositiveValueBrush = CreateBrush(88, 150, 96);
         private static readonly Brush NegativeValueBrush = CreateBrush(198, 92, 84);
@@ -1361,6 +1364,7 @@ namespace HDTplugins.Views
             _settingsService.Reload();
             var tavernSummary = _store.LoadTavernTempoSummary();
             var trinketSummary = _store.LoadTrinketStats(_settingsService.Settings.GetNormalizedScoreLine(), _currentTrinketFilter);
+            var timewarpSummary = _store.LoadTimewarpStats(_settingsService.Settings.GetNormalizedScoreLine(), _currentTimewarpFilter);
 
             var scrollViewer = new ScrollViewer
             {
@@ -1376,6 +1380,10 @@ namespace HDTplugins.Views
                 root.Children.Add(BuildTavernTempoView(tavernSummary));
             else if (_currentMatchStatsPage == MatchStatsPage.Trinkets)
                 root.Children.Add(BuildTrinketStatsView(trinketSummary));
+            else if (_currentMatchStatsPage == MatchStatsPage.Timewarp)
+                root.Children.Add(BuildTimewarpStatsView(timewarpSummary));
+            else if (_currentMatchStatsPage == MatchStatsPage.Quests)
+                root.Children.Add(BuildQuestStatsPlaceholderView());
 
             return scrollViewer;
         }
@@ -1393,6 +1401,8 @@ namespace HDTplugins.Views
             border.Child = panel;
             panel.Children.Add(CreateMatchStatsPageButton(MatchStatsPage.TavernTempo, "TavernTempo_PageTitle"));
             panel.Children.Add(CreateMatchStatsPageButton(MatchStatsPage.Trinkets, "TrinketStats_PageTitle"));
+            panel.Children.Add(CreateMatchStatsPageButton(MatchStatsPage.Timewarp, "TimewarpStats_PageTitle"));
+            panel.Children.Add(CreateMatchStatsPageButton(MatchStatsPage.Quests, "QuestStats_PageTitle"));
             return border;
         }
 
@@ -1557,6 +1567,133 @@ namespace HDTplugins.Views
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
             return grid;
+        }
+
+        private UIElement BuildTimewarpStatsView(TimewarpStatsSummary summary)
+        {
+            var root = new StackPanel();
+            root.Children.Add(BuildTimewarpFilterBar());
+
+            if (summary == null || summary.Rows.Count == 0)
+            {
+                root.Children.Add(new TextBlock
+                {
+                    Text = Loc.S("Common_NoData"),
+                    Foreground = new SolidColorBrush(Color.FromRgb(126, 118, 108)),
+                    FontSize = 15,
+                    Margin = new Thickness(0, 10, 0, 0)
+                });
+                return root;
+            }
+
+            root.Children.Add(BuildTimewarpHeaderRow());
+            foreach (var row in summary.Rows)
+                root.Children.Add(BuildTimewarpRow(row));
+
+            return root;
+        }
+
+        private UIElement BuildTimewarpFilterBar()
+        {
+            var border = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
+                Padding = new Thickness(10),
+                Margin = new Thickness(0, 0, 0, 18)
+            };
+
+            var panel = new StackPanel { Orientation = Orientation.Horizontal };
+            border.Child = panel;
+            panel.Children.Add(CreateTimewarpFilterButton(TimewarpFilter.All, "TimewarpStats_FilterAll"));
+            panel.Children.Add(CreateTimewarpFilterButton(TimewarpFilter.Major, "TimewarpStats_FilterMajor"));
+            panel.Children.Add(CreateTimewarpFilterButton(TimewarpFilter.Minor, "TimewarpStats_FilterMinor"));
+            return border;
+        }
+
+        private Button CreateTimewarpFilterButton(TimewarpFilter filter, string resourceKey)
+        {
+            var isActive = _currentTimewarpFilter == filter;
+            var button = new Button
+            {
+                Content = Loc.S(resourceKey),
+                Padding = new Thickness(14, 7, 14, 7),
+                Margin = new Thickness(0, 0, 10, 0),
+                Background = isActive ? new SolidColorBrush(Color.FromRgb(126, 163, 209)) : Brushes.Transparent,
+                Foreground = Brushes.White,
+                BorderBrush = Brushes.Transparent,
+                Cursor = Cursors.Hand,
+                FontWeight = isActive ? FontWeights.SemiBold : FontWeights.Normal
+            };
+            button.Click += delegate
+            {
+                if (_currentTimewarpFilter == filter)
+                    return;
+
+                _currentTimewarpFilter = filter;
+                RebuildContent();
+            };
+            return button;
+        }
+
+        private UIElement BuildTimewarpHeaderRow()
+        {
+            var border = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
+                Padding = new Thickness(14, 10, 14, 10),
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+
+            var grid = CreateTimewarpGrid();
+            border.Child = grid;
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("TimewarpStats_HeaderName"), 0, FontWeights.SemiBold, Brushes.White));
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("TimewarpStats_HeaderAppearanceRate"), 1, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("TimewarpStats_HeaderPickRate"), 2, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("Common_FirstRateLabel"), 3, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("Common_ScoreRateLabel"), 4, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
+            return border;
+        }
+
+        private UIElement BuildTimewarpRow(TimewarpStatsRow row)
+        {
+            var border = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
+                Padding = new Thickness(14, 12, 14, 12),
+                Margin = new Thickness(0, 0, 0, 6)
+            };
+
+            var grid = CreateTimewarpGrid();
+            border.Child = grid;
+            grid.Children.Add(CreateTavernTempoCell(row.CardName, 0, FontWeights.SemiBold, LightForegroundBrush));
+            grid.Children.Add(CreateTavernTempoCell(FormatRate(row.AppearanceRate, row.AppearanceCount > 0), 1, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(FormatRate(row.PickRate, row.AppearanceCount > 0), 2, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(FormatRate(row.FirstRate, row.PickCount > 0), 3, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(FormatRate(row.ScoreRate, row.PickCount > 0), 4, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
+            return border;
+        }
+
+        private Grid CreateTimewarpGrid()
+        {
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.4, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
+            return grid;
+        }
+
+        private UIElement BuildQuestStatsPlaceholderView()
+        {
+            return new TextBlock
+            {
+                Text = Loc.S("QuestStats_Empty"),
+                Foreground = new SolidColorBrush(Color.FromRgb(126, 118, 108)),
+                FontSize = 15,
+                Margin = new Thickness(0, 10, 0, 0),
+                TextWrapping = TextWrapping.Wrap
+            };
         }
 
         private UIElement BuildTavernTempoSummaryCard(TavernTempoSummary summary)
@@ -1979,6 +2116,7 @@ namespace HDTplugins.Views
                     item.Click += delegate
                     {
                         _store.SetCurrentAccountByKey(account.Key);
+                        _store.RefreshLatestRecordedArchiveForDisplay();
                         _settingsService.Settings.SelectedAccountKey = _store.CurrentAccountKey;
                         _settingsService.Save();
                         _selectedMatchId = null;
@@ -2199,7 +2337,8 @@ namespace HDTplugins.Views
             });
             stack.Children.Add(BuildDetailInfoRow(Loc.S("MatchDetail_LesserTrinketLabel"), ResolveTrinketName(snapshot.LesserTrinketCardId)));
             stack.Children.Add(BuildDetailInfoRow(Loc.S("MatchDetail_GreaterTrinketLabel"), ResolveTrinketName(snapshot.GreaterTrinketCardId)));
-            stack.Children.Add(BuildDetailInfoRow(Loc.S("MatchDetail_HeroPowerTrinketLabel"), ResolveTrinketName(snapshot.HeroPowerTrinketCardId)));
+            if (!string.IsNullOrWhiteSpace(snapshot.HeroPowerTrinketCardId))
+                stack.Children.Add(BuildDetailInfoRow(Loc.S("MatchDetail_HeroPowerTrinketLabel"), ResolveTrinketName(snapshot.HeroPowerTrinketCardId)));
             return section;
         }
 

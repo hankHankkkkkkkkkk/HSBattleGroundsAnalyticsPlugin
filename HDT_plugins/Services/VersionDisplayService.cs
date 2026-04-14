@@ -75,6 +75,7 @@ namespace HDTplugins.Services
                 {
                     Key = BuildRangeKey(rangeDisplay),
                     DisplayName = rangeDisplay,
+                    RawVersion = string.Empty,
                     IsRange = true,
                     VersionRange = members.ToList(),
                     PatchVersion = GetHighestPatchVersionForDisplays(members, displayGroups)
@@ -95,6 +96,7 @@ namespace HDTplugins.Services
                 {
                     Key = representative.Key,
                     DisplayName = pair.Key,
+                    RawVersion = representative.RawVersion,
                     IsRange = false,
                     VersionRange = new List<string> { pair.Key },
                     PatchVersion = GetHighestPatchVersionForDisplays(new[] { pair.Key }, displayGroups)
@@ -269,9 +271,9 @@ namespace HDTplugins.Services
             if (archive == null)
                 return string.Empty;
 
-            var rawVersion = !string.IsNullOrWhiteSpace(archive.PatchVersion)
-                ? archive.PatchVersion
-                : archive.DisplayName;
+            var rawVersion = !string.IsNullOrWhiteSpace(archive.RawVersion)
+                ? archive.RawVersion
+                : (!string.IsNullOrWhiteSpace(archive.PatchVersion) ? archive.PatchVersion : archive.DisplayName);
             return NormalizeDisplayName(RememberAndMapVersion(rawVersion));
         }
 

@@ -17,6 +17,11 @@
       "rawVersion": "2022.3",
       "displayName": "Season12 Patch35.0",
       "isHidden": false
+    },
+    {
+      "rawVersion": "2022.3.62f2 (7670c08855a9)",
+      "displayName": "Season13 Patch35.2",
+      "isHidden": false
     }
   ]
 }

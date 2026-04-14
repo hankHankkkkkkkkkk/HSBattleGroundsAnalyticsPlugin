@@ -20,7 +20,7 @@ namespace HDTplugins
         public string Name => Loc.S("Plugin_Name");
         public string Description => Loc.S("Plugin_Description");
         public string Author => "Hank";
-        public Version Version => new Version(1, 0, 1);
+        public Version Version => new Version(1, 0, 6);
         public string ButtonText => Loc.S("Plugin_ButtonText");
         public MenuItem MenuItem => _menuItem;
 
@@ -117,7 +117,11 @@ namespace HDTplugins
                     _probe.GreaterTrinketOptionCardIds,
                     _probe.GreaterTrinketCardId,
                     _probe.HeroPowerTrinketCardId,
-                    _probe.HeroPowerTrinketType);
+                    _probe.HeroPowerTrinketType,
+                    _probe.TimewarpEntries,
+                    _probe.QuestCardId,
+                    _probe.QuestRewardCardId,
+                    _probe.QuestCompleted);
 
                 var latestArchive = _store.RefreshLatestRecordedArchiveForDisplay();
                 _statsWindow?.SyncVersionSelection(latestArchive?.Key);
@@ -168,7 +172,7 @@ namespace HDTplugins
             }
 
             TryAttachOwner();
-            _statsWindow.SyncVersionSelection(_store.CurrentArchive?.Key);
+            _statsWindow.SyncVersionSelection(null);
             _statsWindow.Show();
             _statsWindow.Activate();
             ScheduleStartupGameTextRefresh();

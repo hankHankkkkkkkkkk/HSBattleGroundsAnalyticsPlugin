@@ -30,6 +30,7 @@ namespace HDTplugins.Models
     {
         public string Key { get; set; }
         public string DisplayName { get; set; }
+        public string RawVersion { get; set; }
         public bool IsRange { get; set; }
         public List<string> VersionRange { get; set; } = new List<string>();
         public string PatchVersion { get; set; }

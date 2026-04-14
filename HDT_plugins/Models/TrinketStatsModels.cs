@@ -25,4 +25,30 @@ namespace HDTplugins.Models
         public double FirstRate { get; set; }
         public double ScoreRate { get; set; }
     }
+
+    public enum TimewarpFilter
+    {
+        All,
+        Major,
+        Minor
+    }
+
+    public class TimewarpStatsSummary
+    {
+        public TimewarpFilter Filter { get; set; }
+        public int EligibleMatches { get; set; }
+        public List<TimewarpStatsRow> Rows { get; set; } = new List<TimewarpStatsRow>();
+    }
+
+    public class TimewarpStatsRow
+    {
+        public string CardId { get; set; }
+        public string CardName { get; set; }
+        public int AppearanceCount { get; set; }
+        public int PickCount { get; set; }
+        public double AppearanceRate { get; set; }
+        public double PickRate { get; set; }
+        public double FirstRate { get; set; }
+        public double ScoreRate { get; set; }
+    }
 }

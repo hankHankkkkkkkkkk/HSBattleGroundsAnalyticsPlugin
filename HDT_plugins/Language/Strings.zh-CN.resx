@@ -220,7 +220,7 @@
     <value>版本信息</value>
   </data>
   <data name="VersionInfo_DefaultDisplay" xml:space="preserve">
-    <value>season12 patch35.0</value>
+    <value>未读取到版本信息</value>
   </data>
   <data name="VersionInfo_NoMoreData" xml:space="preserve">
     <value>暂无更多版本数据</value>
@@ -593,5 +593,32 @@
   </data>
   <data name="MatchDetail_HeroPowerTrinketLabel" xml:space="preserve">
     <value>英雄技能饰品</value>
+  </data>
+  <data name="TimewarpStats_PageTitle" xml:space="preserve">
+    <value>时空牌数据</value>
+  </data>
+  <data name="TimewarpStats_FilterAll" xml:space="preserve">
+    <value>全部时空牌</value>
+  </data>
+  <data name="TimewarpStats_FilterMajor" xml:space="preserve">
+    <value>大时空</value>
+  </data>
+  <data name="TimewarpStats_FilterMinor" xml:space="preserve">
+    <value>小时空</value>
+  </data>
+  <data name="TimewarpStats_HeaderName" xml:space="preserve">
+    <value>牌名</value>
+  </data>
+  <data name="TimewarpStats_HeaderAppearanceRate" xml:space="preserve">
+    <value>出现率</value>
+  </data>
+  <data name="TimewarpStats_HeaderPickRate" xml:space="preserve">
+    <value>选取率</value>
+  </data>
+  <data name="QuestStats_PageTitle" xml:space="preserve">
+    <value>任务数据</value>
+  </data>
+  <data name="QuestStats_Empty" xml:space="preserve">
+    <value>任务数据页面接口已预留，具体业务逻辑后续实现。</value>
   </data>
 </root>
