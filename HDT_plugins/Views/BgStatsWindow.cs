@@ -39,6 +39,7 @@ namespace HDTplugins.Views
         {
             AveragePlacement,
             Race,
+            PickRate,
             FirstRate,
             ScoreRate
         }
@@ -49,6 +50,14 @@ namespace HDTplugins.Views
             AveragePlacement,
             Contribution,
             PickRate
+        }
+
+        private enum MatchStatsPage
+        {
+            TavernTempo,
+            Trinkets,
+            Timewarp,
+            Quests
         }
 
         private readonly StatsStore _store;
@@ -77,6 +86,9 @@ namespace HDTplugins.Views
         private HeroSortColumn _heroSortColumn = HeroSortColumn.Picks;
         private bool _heroSortDescending = true;
         private string _expandedHeroCardId;
+        private MatchStatsPage _currentMatchStatsPage = MatchStatsPage.TavernTempo;
+        private TrinketFilter _currentTrinketFilter = TrinketFilter.All;
+        private TimewarpFilter _currentTimewarpFilter = TimewarpFilter.All;
         private DateTime _anchorDate = DateTime.Today;
         private static readonly Brush PositiveValueBrush = CreateBrush(88, 150, 96);
         private static readonly Brush NegativeValueBrush = CreateBrush(198, 92, 84);
@@ -164,6 +176,10 @@ namespace HDTplugins.Views
                 _store.SetArchiveByKey(archiveKey);
             else
                 _store.RefreshLatestRecordedArchiveForDisplay();
+
+            _currentMatchStatsPage = _store.ShouldDefaultToTrinketStatsPage()
+                ? MatchStatsPage.Trinkets
+                : MatchStatsPage.TavernTempo;
 
             RefreshVersionButton();
             RefreshHistoryToolbar();
@@ -261,24 +277,32 @@ namespace HDTplugins.Views
             DockPanel.SetDock(_accountButton, Dock.Bottom);
             dock.Children.Add(_accountButton);
 
-            var stack = new StackPanel();
-            DockPanel.SetDock(stack, Dock.Top);
-            dock.Children.Add(stack);
+            var sidebarGrid = new Grid();
+            sidebarGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(118) });
+            sidebarGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            sidebarGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            DockPanel.SetDock(sidebarGrid, Dock.Top);
+            dock.Children.Add(sidebarGrid);
 
             _versionButton.HorizontalContentAlignment = HorizontalAlignment.Left;
             _versionButton.Padding = new Thickness(10, 12, 10, 12);
-            _versionButton.Margin = new Thickness(0, 0, 0, 34);
+            _versionButton.Margin = new Thickness(0, 0, 0, 0);
             _versionButton.Background = Brushes.Transparent;
             _versionButton.BorderBrush = Brushes.Transparent;
             _versionButton.Cursor = Cursors.Hand;
+            _versionButton.VerticalAlignment = VerticalAlignment.Stretch;
             _versionButton.Click += delegate { OpenVersionMenu(); };
-            stack.Children.Add(_versionButton);
+            Grid.SetRow(_versionButton, 0);
+            sidebarGrid.Children.Add(_versionButton);
 
-            stack.Children.Add(CreateSectionButton(SidebarSection.History, Loc.S("Sidebar_History")));
-            stack.Children.Add(CreateSectionButton(SidebarSection.Races, Loc.S("Sidebar_Races")));
-            stack.Children.Add(CreateSectionButton(SidebarSection.Heroes, Loc.S("Sidebar_Heroes")));
-            stack.Children.Add(CreateSectionButton(SidebarSection.Matches, Loc.S("Sidebar_Matches")));
-            stack.Children.Add(CreateSectionButton(SidebarSection.Settings, Loc.S("Sidebar_Settings")));
+            var navigationStack = new StackPanel { Margin = new Thickness(0, 34, 0, 0) };
+            navigationStack.Children.Add(CreateSectionButton(SidebarSection.History, Loc.S("Sidebar_History")));
+            navigationStack.Children.Add(CreateSectionButton(SidebarSection.Races, Loc.S("Sidebar_Races")));
+            navigationStack.Children.Add(CreateSectionButton(SidebarSection.Heroes, Loc.S("Sidebar_Heroes")));
+            navigationStack.Children.Add(CreateSectionButton(SidebarSection.Matches, Loc.S("Sidebar_Matches")));
+            navigationStack.Children.Add(CreateSectionButton(SidebarSection.Settings, Loc.S("Sidebar_Settings")));
+            Grid.SetRow(navigationStack, 1);
+            sidebarGrid.Children.Add(navigationStack);
             return border;
         }
 
@@ -392,6 +416,8 @@ namespace HDTplugins.Views
                     LoadHeroSortPreference();
                     _expandedHeroCardId = null;
                 }
+                if (section == SidebarSection.Matches)
+                    _currentMatchStatsPage = _store.ShouldDefaultToTrinketStatsPage() ? MatchStatsPage.Trinkets : MatchStatsPage.TavernTempo;
                 RefreshSectionButtons();
                 RebuildContent();
             };
@@ -471,6 +497,14 @@ namespace HDTplugins.Views
                 _historyToolbar.Visibility = Visibility.Collapsed;
                 _sectionTitle.Text = GetSectionTitle();
                 _contentHost.Child = BuildHeroStatsView();
+                return;
+            }
+
+            if (_currentSection == SidebarSection.Matches)
+            {
+                _historyToolbar.Visibility = Visibility.Collapsed;
+                _sectionTitle.Text = GetSectionTitle();
+                _contentHost.Child = BuildMatchStatsView();
                 return;
             }
 
@@ -713,6 +747,12 @@ namespace HDTplugins.Views
                         : ordered.OrderBy(x => x.HasData ? 0 : 1).ThenBy(x => x.FirstRate);
                     query = query.ThenBy(x => x.RaceName, StringComparer.CurrentCultureIgnoreCase);
                     break;
+                case RaceSortColumn.PickRate:
+                    query = _raceSortDescending
+                        ? ordered.OrderBy(x => x.HasData ? 0 : 1).ThenByDescending(x => x.PickRate)
+                        : ordered.OrderBy(x => x.HasData ? 0 : 1).ThenBy(x => x.PickRate);
+                    query = query.ThenBy(x => x.RaceName, StringComparer.CurrentCultureIgnoreCase);
+                    break;
                 case RaceSortColumn.ScoreRate:
                     query = _raceSortDescending
                         ? ordered.OrderBy(x => x.HasData ? 0 : 1).ThenByDescending(x => x.ScoreRate)
@@ -744,12 +784,14 @@ namespace HDTplugins.Views
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.2, GridUnitType.Star) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star) });
             border.Child = grid;
 
             grid.Children.Add(CreateRaceHeaderButton("RaceStats_HeaderRace", RaceSortColumn.Race, 0));
             grid.Children.Add(CreateRaceHeaderButton("RaceStats_HeaderAvgPlacement", RaceSortColumn.AveragePlacement, 1));
-            grid.Children.Add(CreateRaceHeaderButton("RaceStats_HeaderFirstRate", RaceSortColumn.FirstRate, 2));
-            grid.Children.Add(CreateRaceHeaderButton("RaceStats_HeaderScoreRate", RaceSortColumn.ScoreRate, 3));
+            grid.Children.Add(CreateRaceHeaderButton("RaceStats_HeaderPickRate", RaceSortColumn.PickRate, 2));
+            grid.Children.Add(CreateRaceHeaderButton("RaceStats_HeaderFirstRate", RaceSortColumn.FirstRate, 3));
+            grid.Children.Add(CreateRaceHeaderButton("RaceStats_HeaderScoreRate", RaceSortColumn.ScoreRate, 4));
 
             return border;
         }
@@ -801,6 +843,7 @@ namespace HDTplugins.Views
             summaryGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.2, GridUnitType.Star) });
             summaryGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star) });
             summaryGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star) });
+            summaryGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star) });
             summaryBorder.Child = summaryGrid;
 
             summaryGrid.Children.Add(CreateRaceSummaryText(row.RaceName, 0, HorizontalAlignment.Left, FontWeights.SemiBold));
@@ -810,8 +853,9 @@ namespace HDTplugins.Views
                 HorizontalAlignment.Center,
                 FontWeights.Normal,
                 row.HasData ? GetPlacementBrush(row.AveragePlacement.Value) : NeutralValueBrush));
-            summaryGrid.Children.Add(CreateRaceSummaryText(FormatRate(row.FirstRate, row.HasData), 2, HorizontalAlignment.Center, FontWeights.Normal));
-            summaryGrid.Children.Add(CreateRaceSummaryText(FormatRate(row.ScoreRate, row.HasData), 3, HorizontalAlignment.Center, FontWeights.Normal));
+            summaryGrid.Children.Add(CreateRaceSummaryText(FormatRate(row.PickRate, row.HasData), 2, HorizontalAlignment.Center, FontWeights.Normal));
+            summaryGrid.Children.Add(CreateRaceSummaryText(FormatRate(row.FirstRate, row.HasData), 3, HorizontalAlignment.Center, FontWeights.Normal));
+            summaryGrid.Children.Add(CreateRaceSummaryText(FormatRate(row.ScoreRate, row.HasData), 4, HorizontalAlignment.Center, FontWeights.Normal));
 
             summaryBorder.MouseLeftButtonUp += delegate
             {
@@ -1315,6 +1359,472 @@ namespace HDTplugins.Views
             return value > 0.001 ? "+" + formatted : formatted;
         }
 
+        private UIElement BuildMatchStatsView()
+        {
+            _settingsService.Reload();
+            var tavernSummary = _store.LoadTavernTempoSummary();
+            var trinketSummary = _store.LoadTrinketStats(_settingsService.Settings.GetNormalizedScoreLine(), _currentTrinketFilter);
+            var timewarpSummary = _store.LoadTimewarpStats(_settingsService.Settings.GetNormalizedScoreLine(), _currentTimewarpFilter);
+
+            var scrollViewer = new ScrollViewer
+            {
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+            };
+
+            var root = new StackPanel();
+            scrollViewer.Content = root;
+            root.Children.Add(BuildMatchStatsPageBar(_currentMatchStatsPage == MatchStatsPage.Trinkets ? new Thickness(0, 0, 0, 18) : new Thickness(0, 0, 0, 18)));
+
+            if (_currentMatchStatsPage == MatchStatsPage.TavernTempo)
+                root.Children.Add(BuildTavernTempoView(tavernSummary));
+            else if (_currentMatchStatsPage == MatchStatsPage.Trinkets)
+                root.Children.Add(BuildTrinketStatsView(trinketSummary));
+            else if (_currentMatchStatsPage == MatchStatsPage.Timewarp)
+                root.Children.Add(BuildTimewarpStatsView(timewarpSummary));
+            else if (_currentMatchStatsPage == MatchStatsPage.Quests)
+                root.Children.Add(BuildQuestStatsPlaceholderView());
+
+            return scrollViewer;
+        }
+
+        private UIElement BuildMatchStatsPageBar(Thickness margin)
+        {
+            var border = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
+                Padding = new Thickness(10),
+                Margin = margin
+            };
+
+            var panel = new StackPanel { Orientation = Orientation.Horizontal };
+            border.Child = panel;
+            panel.Children.Add(CreateMatchStatsPageButton(MatchStatsPage.TavernTempo, "TavernTempo_PageTitle"));
+            panel.Children.Add(CreateMatchStatsPageButton(MatchStatsPage.Trinkets, "TrinketStats_PageTitle"));
+            panel.Children.Add(CreateMatchStatsPageButton(MatchStatsPage.Timewarp, "TimewarpStats_PageTitle"));
+            panel.Children.Add(CreateMatchStatsPageButton(MatchStatsPage.Quests, "QuestStats_PageTitle"));
+            return border;
+        }
+
+        private Button CreateMatchStatsPageButton(MatchStatsPage page, string resourceKey)
+        {
+            var isActive = _currentMatchStatsPage == page;
+            var button = new Button
+            {
+                Content = Loc.S(resourceKey),
+                Padding = new Thickness(14, 7, 14, 7),
+                Margin = new Thickness(0, 0, 10, 0),
+                Background = isActive ? new SolidColorBrush(Color.FromRgb(126, 163, 209)) : Brushes.Transparent,
+                Foreground = Brushes.White,
+                BorderBrush = Brushes.Transparent,
+                Cursor = Cursors.Hand,
+                FontWeight = isActive ? FontWeights.SemiBold : FontWeights.Normal
+            };
+            button.Click += delegate
+            {
+                if (_currentMatchStatsPage == page)
+                    return;
+
+                _currentMatchStatsPage = page;
+                RebuildContent();
+            };
+            return button;
+        }
+
+        private UIElement BuildTavernTempoView(TavernTempoSummary summary)
+        {
+            var root = new StackPanel();
+            root.Children.Add(BuildTavernTempoSummaryCard(summary));
+
+            if (summary == null || summary.TotalMatches == 0)
+            {
+                root.Children.Add(new TextBlock
+                {
+                    Text = Loc.S("Common_NoData"),
+                    Foreground = new SolidColorBrush(Color.FromRgb(126, 118, 108)),
+                    FontSize = 15,
+                    Margin = new Thickness(0, 10, 0, 0)
+                });
+                return root;
+            }
+
+            foreach (var section in summary.Sections)
+                root.Children.Add(BuildTavernTempoSection(section));
+
+            return root;
+        }
+
+        private UIElement BuildTrinketStatsView(TrinketStatsSummary summary)
+        {
+            var root = new StackPanel();
+            root.Children.Add(BuildTrinketFilterBar());
+
+            if (summary == null || summary.Rows.Count == 0)
+            {
+                root.Children.Add(new TextBlock
+                {
+                    Text = Loc.S("Common_NoData"),
+                    Foreground = new SolidColorBrush(Color.FromRgb(126, 118, 108)),
+                    FontSize = 15,
+                    Margin = new Thickness(0, 10, 0, 0)
+                });
+                return root;
+            }
+
+            root.Children.Add(BuildTrinketHeaderRow());
+            foreach (var row in summary.Rows)
+                root.Children.Add(BuildTrinketRow(row));
+
+            return root;
+        }
+
+        private UIElement BuildTrinketFilterBar()
+        {
+            var border = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
+                Padding = new Thickness(10),
+                Margin = new Thickness(0, 0, 0, 18)
+            };
+
+            var panel = new StackPanel { Orientation = Orientation.Horizontal };
+            border.Child = panel;
+            panel.Children.Add(CreateTrinketFilterButton(TrinketFilter.All, "TrinketStats_FilterAll"));
+            panel.Children.Add(CreateTrinketFilterButton(TrinketFilter.Lesser, "TrinketStats_FilterLesser"));
+            panel.Children.Add(CreateTrinketFilterButton(TrinketFilter.Greater, "TrinketStats_FilterGreater"));
+            return border;
+        }
+
+        private Button CreateTrinketFilterButton(TrinketFilter filter, string resourceKey)
+        {
+            var isActive = _currentTrinketFilter == filter;
+            var button = new Button
+            {
+                Content = Loc.S(resourceKey),
+                Padding = new Thickness(14, 7, 14, 7),
+                Margin = new Thickness(0, 0, 10, 0),
+                Background = isActive ? new SolidColorBrush(Color.FromRgb(126, 163, 209)) : Brushes.Transparent,
+                Foreground = Brushes.White,
+                BorderBrush = Brushes.Transparent,
+                Cursor = Cursors.Hand,
+                FontWeight = isActive ? FontWeights.SemiBold : FontWeights.Normal
+            };
+            button.Click += delegate
+            {
+                if (_currentTrinketFilter == filter)
+                    return;
+
+                _currentTrinketFilter = filter;
+                RebuildContent();
+            };
+            return button;
+        }
+
+        private UIElement BuildTrinketHeaderRow()
+        {
+            var border = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
+                Padding = new Thickness(14, 10, 14, 10),
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+
+            var grid = CreateTrinketGrid();
+            border.Child = grid;
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("TrinketStats_HeaderName"), 0, FontWeights.SemiBold, Brushes.White));
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("Common_MatchesLabel"), 1, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("TrinketStats_HeaderPickRate"), 2, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("Common_FirstRateLabel"), 3, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("Common_ScoreRateLabel"), 4, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
+            return border;
+        }
+
+        private UIElement BuildTrinketRow(TrinketStatsRow row)
+        {
+            var border = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
+                Padding = new Thickness(14, 12, 14, 12),
+                Margin = new Thickness(0, 0, 0, 6)
+            };
+
+            var grid = CreateTrinketGrid();
+            border.Child = grid;
+            grid.Children.Add(CreateTavernTempoCell(row.CardName, 0, FontWeights.SemiBold, LightForegroundBrush));
+            grid.Children.Add(CreateTavernTempoCell(row.MatchCount.ToString(CultureInfo.CurrentCulture), 1, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(FormatRate(row.PickRate, row.MatchCount > 0), 2, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(FormatRate(row.FirstRate, row.MatchCount > 0), 3, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(FormatRate(row.ScoreRate, row.MatchCount > 0), 4, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
+            return border;
+        }
+
+        private Grid CreateTrinketGrid()
+        {
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.4, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.8, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
+            return grid;
+        }
+
+        private UIElement BuildTimewarpStatsView(TimewarpStatsSummary summary)
+        {
+            var root = new StackPanel();
+            root.Children.Add(BuildTimewarpFilterBar());
+
+            if (summary == null || summary.Rows.Count == 0)
+            {
+                root.Children.Add(new TextBlock
+                {
+                    Text = Loc.S("Common_NoData"),
+                    Foreground = new SolidColorBrush(Color.FromRgb(126, 118, 108)),
+                    FontSize = 15,
+                    Margin = new Thickness(0, 10, 0, 0)
+                });
+                return root;
+            }
+
+            root.Children.Add(BuildTimewarpHeaderRow());
+            foreach (var row in summary.Rows)
+                root.Children.Add(BuildTimewarpRow(row));
+
+            return root;
+        }
+
+        private UIElement BuildTimewarpFilterBar()
+        {
+            var border = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
+                Padding = new Thickness(10),
+                Margin = new Thickness(0, 0, 0, 18)
+            };
+
+            var panel = new StackPanel { Orientation = Orientation.Horizontal };
+            border.Child = panel;
+            panel.Children.Add(CreateTimewarpFilterButton(TimewarpFilter.All, "TimewarpStats_FilterAll"));
+            panel.Children.Add(CreateTimewarpFilterButton(TimewarpFilter.Major, "TimewarpStats_FilterMajor"));
+            panel.Children.Add(CreateTimewarpFilterButton(TimewarpFilter.Minor, "TimewarpStats_FilterMinor"));
+            return border;
+        }
+
+        private Button CreateTimewarpFilterButton(TimewarpFilter filter, string resourceKey)
+        {
+            var isActive = _currentTimewarpFilter == filter;
+            var button = new Button
+            {
+                Content = Loc.S(resourceKey),
+                Padding = new Thickness(14, 7, 14, 7),
+                Margin = new Thickness(0, 0, 10, 0),
+                Background = isActive ? new SolidColorBrush(Color.FromRgb(126, 163, 209)) : Brushes.Transparent,
+                Foreground = Brushes.White,
+                BorderBrush = Brushes.Transparent,
+                Cursor = Cursors.Hand,
+                FontWeight = isActive ? FontWeights.SemiBold : FontWeights.Normal
+            };
+            button.Click += delegate
+            {
+                if (_currentTimewarpFilter == filter)
+                    return;
+
+                _currentTimewarpFilter = filter;
+                RebuildContent();
+            };
+            return button;
+        }
+
+        private UIElement BuildTimewarpHeaderRow()
+        {
+            var border = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
+                Padding = new Thickness(14, 10, 14, 10),
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+
+            var grid = CreateTimewarpGrid();
+            border.Child = grid;
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("TimewarpStats_HeaderName"), 0, FontWeights.SemiBold, Brushes.White));
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("TimewarpStats_HeaderAppearanceRate"), 1, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("TimewarpStats_HeaderPickRate"), 2, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("Common_FirstRateLabel"), 3, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("Common_ScoreRateLabel"), 4, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
+            return border;
+        }
+
+        private UIElement BuildTimewarpRow(TimewarpStatsRow row)
+        {
+            var border = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
+                Padding = new Thickness(14, 12, 14, 12),
+                Margin = new Thickness(0, 0, 0, 6)
+            };
+
+            var grid = CreateTimewarpGrid();
+            border.Child = grid;
+            grid.Children.Add(CreateTavernTempoCell(row.CardName, 0, FontWeights.SemiBold, LightForegroundBrush));
+            grid.Children.Add(CreateTavernTempoCell(FormatRate(row.AppearanceRate, row.AppearanceCount > 0), 1, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(FormatRate(row.PickRate, row.AppearanceCount > 0), 2, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(FormatRate(row.FirstRate, row.PickCount > 0), 3, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(FormatRate(row.ScoreRate, row.PickCount > 0), 4, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
+            return border;
+        }
+
+        private Grid CreateTimewarpGrid()
+        {
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.4, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
+            return grid;
+        }
+
+        private UIElement BuildQuestStatsPlaceholderView()
+        {
+            return new TextBlock
+            {
+                Text = Loc.S("QuestStats_Empty"),
+                Foreground = new SolidColorBrush(Color.FromRgb(126, 118, 108)),
+                FontSize = 15,
+                Margin = new Thickness(0, 10, 0, 0),
+                TextWrapping = TextWrapping.Wrap
+            };
+        }
+
+        private UIElement BuildTavernTempoSummaryCard(TavernTempoSummary summary)
+        {
+            var border = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
+                Padding = new Thickness(16),
+                Margin = new Thickness(0, 0, 0, 18)
+            };
+
+            var stack = new StackPanel();
+            border.Child = stack;
+            stack.Children.Add(new TextBlock
+            {
+                Text = Loc.S("TavernTempo_PageTitle"),
+                FontSize = 18,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = Brushes.White
+            });
+            stack.Children.Add(new TextBlock
+            {
+                Text = summary == null || summary.TotalMatches == 0
+                    ? Loc.S("TavernTempo_SummaryEmpty")
+                    : Loc.F(
+                        "TavernTempo_SummaryFormat",
+                        summary.TotalMatches,
+                        summary.OverallAveragePlacement.ToString("F2", CultureInfo.CurrentCulture),
+                        BuildScoreLineText(_settingsService.Settings.GetNormalizedScoreLine())),
+                Foreground = Brushes.White,
+                FontSize = 13,
+                Margin = new Thickness(0, 8, 0, 0),
+                TextWrapping = TextWrapping.Wrap
+            });
+            return border;
+        }
+
+        private UIElement BuildTavernTempoSection(TavernTempoTierSection section)
+        {
+            var container = new StackPanel { Margin = new Thickness(0, 0, 0, 18) };
+            container.Children.Add(new TextBlock
+            {
+                Text = Loc.F("TavernTempo_TierHeaderFormat", section.TavernTier),
+                FontSize = 18,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(Color.FromRgb(95, 88, 79)),
+                Margin = new Thickness(0, 0, 0, 10)
+            });
+            container.Children.Add(BuildTavernTempoHeaderRow());
+
+            foreach (var row in section.Buckets)
+                container.Children.Add(BuildTavernTempoRow(row));
+
+            return container;
+        }
+
+        private UIElement BuildTavernTempoHeaderRow()
+        {
+            var border = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
+                Padding = new Thickness(14, 10, 14, 10),
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+
+            var grid = CreateTavernTempoGrid();
+            border.Child = grid;
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("TavernTempo_HeaderBucket"), 0, FontWeights.SemiBold, Brushes.White));
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("Common_MatchesLabel"), 1, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("TavernTempo_HeaderRate"), 2, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("Common_AvgPlacementLabel"), 3, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("TavernTempo_HeaderVsOverall"), 4, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
+            return border;
+        }
+
+        private UIElement BuildTavernTempoRow(TavernTempoBucketRow row)
+        {
+            var border = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
+                Padding = new Thickness(14, 12, 14, 12),
+                Margin = new Thickness(0, 0, 0, 6)
+            };
+
+            var grid = CreateTavernTempoGrid();
+            border.Child = grid;
+            grid.Children.Add(CreateTavernTempoCell(Loc.S(row.BucketKey), 0, FontWeights.SemiBold, LightForegroundBrush));
+            grid.Children.Add(CreateTavernTempoCell(row.MatchCount.ToString(CultureInfo.CurrentCulture), 1, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(FormatRate(row.MatchRate, row.MatchCount > 0), 2, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(
+                row.AveragePlacement.HasValue ? row.AveragePlacement.Value.ToString("F2", CultureInfo.CurrentCulture) : "-",
+                3,
+                FontWeights.Normal,
+                row.AveragePlacement.HasValue ? GetPlacementBrush(row.AveragePlacement.Value) : NeutralValueBrush,
+                TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(
+                row.PlacementDelta.HasValue ? FormatSignedDouble(row.PlacementDelta.Value) : "-",
+                4,
+                FontWeights.Normal,
+                row.PlacementDelta.HasValue ? GetPlacementDeltaBrush(row.PlacementDelta.Value) : NeutralValueBrush,
+                TextAlignment.Right));
+            return border;
+        }
+
+        private Grid CreateTavernTempoGrid()
+        {
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.9, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.2, GridUnitType.Star) });
+            return grid;
+        }
+
+        private UIElement CreateTavernTempoCell(string text, int columnIndex, FontWeight fontWeight, Brush foreground, TextAlignment textAlignment = TextAlignment.Left)
+        {
+            var block = new TextBlock
+            {
+                Text = text,
+                Foreground = foreground,
+                FontSize = 14,
+                FontWeight = fontWeight,
+                TextWrapping = TextWrapping.Wrap,
+                TextAlignment = textAlignment,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            Grid.SetColumn(block, columnIndex);
+            return block;
+        }
+
         private UIElement BuildPlaceholder()
         {
             var grid = new Grid();
@@ -1482,7 +1992,7 @@ namespace HDTplugins.Views
 
         private void RefreshVersionButton()
         {
-            var archive = _store.CurrentArchive ?? _store.GetLatestRecordedArchiveForDisplay();
+            var archive = _store.GetSelectedArchiveForDisplay() ?? _store.GetLatestRecordedArchiveForDisplay();
             var stack = new StackPanel();
             stack.Children.Add(new TextBlock
             {
@@ -1497,9 +2007,11 @@ namespace HDTplugins.Views
                 Foreground = Brushes.White,
                 FontSize = 16,
                 Margin = new Thickness(0, 8, 0, 0),
-                TextWrapping = TextWrapping.Wrap
+                TextWrapping = TextWrapping.Wrap,
+                MaxHeight = 52
             });
             _versionButton.Content = stack;
+            _versionButton.ToolTip = archive != null ? _store.GetArchiveDisplayName(archive) : Loc.S("VersionInfo_NoMoreData");
         }
 
         private void RefreshAccountButton()
@@ -1549,6 +2061,8 @@ namespace HDTplugins.Views
         {
             var menu = new ContextMenu();
             var archives = _store.GetRecordedArchives();
+            var currentArchive = _store.GetSelectedArchiveForDisplay();
+            var currentKey = currentArchive?.Key;
             if (archives.Count == 0)
             {
                 menu.Items.Add(new MenuItem { Header = Loc.S("VersionInfo_NoMoreData"), IsEnabled = false });
@@ -1557,11 +2071,12 @@ namespace HDTplugins.Views
             {
                 foreach (var archive in archives)
                 {
+                    var displayName = _store.GetArchiveDisplayName(archive);
                     var item = new MenuItem
                     {
-                        Header = _store.GetArchiveDisplayName(archive),
+                        Header = displayName,
                         IsCheckable = true,
-                        IsChecked = string.Equals(archive.Key, _store.CurrentArchive?.Key, StringComparison.OrdinalIgnoreCase)
+                        IsChecked = string.Equals(archive.Key, currentKey, StringComparison.OrdinalIgnoreCase)
                     };
                     item.Click += delegate
                     {
@@ -1601,6 +2116,7 @@ namespace HDTplugins.Views
                     item.Click += delegate
                     {
                         _store.SetCurrentAccountByKey(account.Key);
+                        _store.RefreshLatestRecordedArchiveForDisplay();
                         _settingsService.Settings.SelectedAccountKey = _store.CurrentAccountKey;
                         _settingsService.Save();
                         _selectedMatchId = null;
@@ -1685,6 +2201,8 @@ namespace HDTplugins.Views
             var root = new StackPanel();
             root.Children.Add(BuildDetailHeader(snapshot));
             root.Children.Add(BuildHeroSection(snapshot));
+            if (_store.ShouldShowTrinketDetails(snapshot))
+                root.Children.Add(BuildTrinketDetailSection(snapshot));
             root.Children.Add(BuildFinalBoardSection(snapshot));
             root.Children.Add(BuildTavernSection(snapshot));
             return root;
@@ -1802,6 +2320,57 @@ namespace HDTplugins.Views
                     VerticalAlignment = VerticalAlignment.Center
                 }
             };
+        }
+
+        private UIElement BuildTrinketDetailSection(BgSnapshot snapshot)
+        {
+            var section = CreateSectionContainer();
+            var stack = new StackPanel();
+            section.Child = stack;
+            stack.Children.Add(new TextBlock
+            {
+                Text = Loc.S("MatchDetail_TrinketSection"),
+                FontSize = 18,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = Brushes.White,
+                Margin = new Thickness(0, 0, 0, 12)
+            });
+            stack.Children.Add(BuildDetailInfoRow(Loc.S("MatchDetail_LesserTrinketLabel"), ResolveTrinketName(snapshot.LesserTrinketCardId)));
+            stack.Children.Add(BuildDetailInfoRow(Loc.S("MatchDetail_GreaterTrinketLabel"), ResolveTrinketName(snapshot.GreaterTrinketCardId)));
+            if (!string.IsNullOrWhiteSpace(snapshot.HeroPowerTrinketCardId))
+                stack.Children.Add(BuildDetailInfoRow(Loc.S("MatchDetail_HeroPowerTrinketLabel"), ResolveTrinketName(snapshot.HeroPowerTrinketCardId)));
+            return section;
+        }
+
+        private UIElement BuildDetailInfoRow(string label, string value)
+        {
+            var grid = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(180) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.Children.Add(new TextBlock
+            {
+                Text = label,
+                FontSize = 14,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = Brushes.White
+            });
+            var valueBlock = new TextBlock
+            {
+                Text = value,
+                FontSize = 14,
+                Foreground = Brushes.White,
+                TextWrapping = TextWrapping.Wrap
+            };
+            Grid.SetColumn(valueBlock, 1);
+            grid.Children.Add(valueBlock);
+            return grid;
+        }
+
+        private string ResolveTrinketName(string cardId)
+        {
+            return string.IsNullOrWhiteSpace(cardId)
+                ? Loc.S("Common_None")
+                : GameTextService.GetCardName(cardId, cardId);
         }
 
         private TextBlock CreateInfoText(string text)
@@ -1960,7 +2529,7 @@ namespace HDTplugins.Views
             }
 
             var current = new HashSet<string>(combinedTags, StringComparer.OrdinalIgnoreCase);
-            var available = _store.GetAvailableTags().Where(tag => !current.Contains(tag)).ToList();
+            var available = _store.GetAvailableTags(snapshot).Where(tag => !current.Contains(tag)).ToList();
             if (available.Count == 0)
             {
                 menu.Items.Add(new MenuItem { Header = Loc.S("Tags_NoAvailable"), IsEnabled = false });

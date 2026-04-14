@@ -8,6 +8,7 @@ namespace HDTplugins.Models
         public string RaceTag { get; set; }
         public string RaceName { get; set; }
         public int MatchCount { get; set; }
+        public double PickRate { get; set; }
         public double? AveragePlacement { get; set; }
         public double FirstRate { get; set; }
         public double ScoreRate { get; set; }

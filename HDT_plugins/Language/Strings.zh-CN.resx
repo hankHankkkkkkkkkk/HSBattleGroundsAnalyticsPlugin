@@ -220,7 +220,7 @@
     <value>版本信息</value>
   </data>
   <data name="VersionInfo_DefaultDisplay" xml:space="preserve">
-    <value>season12 patch35.0</value>
+    <value>未读取到版本信息</value>
   </data>
   <data name="VersionInfo_NoMoreData" xml:space="preserve">
     <value>暂无更多版本数据</value>
@@ -447,6 +447,9 @@
   <data name="RaceStats_HeaderAvgPlacement" xml:space="preserve">
     <value>平均排名</value>
   </data>
+  <data name="RaceStats_HeaderPickRate" xml:space="preserve">
+    <value>选取率</value>
+  </data>
   <data name="HeroStats_HeaderHero" xml:space="preserve">
     <value>英雄</value>
   </data>
@@ -491,5 +494,131 @@
   </data>
   <data name="HeroStats_ContributionPerGame" xml:space="preserve">
     <value>场均贡献</value>
+  </data>
+  <data name="TavernTempo_PageTitle" xml:space="preserve">
+    <value>升本节奏</value>
+  </data>
+  <data name="TavernTempo_SummaryFormat" xml:space="preserve">
+    <value>对局数：{0}  总平均排名：{1}  分数线：{2}</value>
+  </data>
+  <data name="TavernTempo_SummaryEmpty" xml:space="preserve">
+    <value>对局数：0  总平均排名：-</value>
+  </data>
+  <data name="TavernTempo_TierHeaderFormat" xml:space="preserve">
+    <value>升 {0} 级酒馆</value>
+  </data>
+  <data name="TavernTempo_HeaderBucket" xml:space="preserve">
+    <value>时机</value>
+  </data>
+  <data name="TavernTempo_HeaderRate" xml:space="preserve">
+    <value>占比</value>
+  </data>
+  <data name="TavernTempo_HeaderVsOverall" xml:space="preserve">
+    <value>较总平均</value>
+  </data>
+  <data name="TavernTempo_Tier3_BeforeTurn3" xml:space="preserve">
+    <value>第三回合前</value>
+  </data>
+  <data name="TavernTempo_Tier3_Turn3" xml:space="preserve">
+    <value>第三回合</value>
+  </data>
+  <data name="TavernTempo_Tier3_Turn4" xml:space="preserve">
+    <value>第四回合</value>
+  </data>
+  <data name="TavernTempo_Tier3_Turn5" xml:space="preserve">
+    <value>第五回合</value>
+  </data>
+  <data name="TavernTempo_Tier3_AfterTurn5" xml:space="preserve">
+    <value>第五回合后</value>
+  </data>
+  <data name="TavernTempo_Tier4_Turn4" xml:space="preserve">
+    <value>第四回合</value>
+  </data>
+  <data name="TavernTempo_Tier4_Turn5" xml:space="preserve">
+    <value>第五回合</value>
+  </data>
+  <data name="TavernTempo_Tier4_Turn6" xml:space="preserve">
+    <value>第六回合</value>
+  </data>
+  <data name="TavernTempo_Tier4_AfterTurn6" xml:space="preserve">
+    <value>第六回合后</value>
+  </data>
+  <data name="TavernTempo_Tier5_Turn6" xml:space="preserve">
+    <value>第六回合</value>
+  </data>
+  <data name="TavernTempo_Tier5_Turn7" xml:space="preserve">
+    <value>第七回合</value>
+  </data>
+  <data name="TavernTempo_Tier5_AfterTurn7" xml:space="preserve">
+    <value>第七回合后</value>
+  </data>
+  <data name="Common_FirstRateLabel" xml:space="preserve">
+    <value>吃鸡率</value>
+  </data>
+  <data name="Common_ScoreRateLabel" xml:space="preserve">
+    <value>得分率</value>
+  </data>
+  <data name="TrinketStats_PageTitle" xml:space="preserve">
+    <value>饰品数据</value>
+  </data>
+  <data name="TrinketStats_SummaryEmpty" xml:space="preserve">
+    <value>当前范围还没有饰品数据。</value>
+  </data>
+  <data name="TrinketStats_SummaryFormat" xml:space="preserve">
+    <value>当前范围共 {0} 场对局，得分线 {1}。</value>
+  </data>
+  <data name="TrinketStats_FilterAll" xml:space="preserve">
+    <value>全部饰品</value>
+  </data>
+  <data name="TrinketStats_FilterLesser" xml:space="preserve">
+    <value>小饰品</value>
+  </data>
+  <data name="TrinketStats_FilterGreater" xml:space="preserve">
+    <value>大饰品</value>
+  </data>
+  <data name="TrinketStats_HeaderName" xml:space="preserve">
+    <value>饰品</value>
+  </data>
+  <data name="TrinketStats_HeaderPickRate" xml:space="preserve">
+    <value>选取率</value>
+  </data>
+  <data name="MatchDetail_TrinketSection" xml:space="preserve">
+    <value>饰品</value>
+  </data>
+  <data name="MatchDetail_LesserTrinketLabel" xml:space="preserve">
+    <value>小饰品</value>
+  </data>
+  <data name="MatchDetail_GreaterTrinketLabel" xml:space="preserve">
+    <value>大饰品</value>
+  </data>
+  <data name="MatchDetail_HeroPowerTrinketLabel" xml:space="preserve">
+    <value>英雄技能饰品</value>
+  </data>
+  <data name="TimewarpStats_PageTitle" xml:space="preserve">
+    <value>时空牌数据</value>
+  </data>
+  <data name="TimewarpStats_FilterAll" xml:space="preserve">
+    <value>全部时空牌</value>
+  </data>
+  <data name="TimewarpStats_FilterMajor" xml:space="preserve">
+    <value>大时空</value>
+  </data>
+  <data name="TimewarpStats_FilterMinor" xml:space="preserve">
+    <value>小时空</value>
+  </data>
+  <data name="TimewarpStats_HeaderName" xml:space="preserve">
+    <value>牌名</value>
+  </data>
+  <data name="TimewarpStats_HeaderAppearanceRate" xml:space="preserve">
+    <value>出现率</value>
+  </data>
+  <data name="TimewarpStats_HeaderPickRate" xml:space="preserve">
+    <value>选取率</value>
+  </data>
+  <data name="QuestStats_PageTitle" xml:space="preserve">
+    <value>任务数据</value>
+  </data>
+  <data name="QuestStats_Empty" xml:space="preserve">
+    <value>任务数据页面接口已预留，具体业务逻辑后续实现。</value>
   </data>
 </root>

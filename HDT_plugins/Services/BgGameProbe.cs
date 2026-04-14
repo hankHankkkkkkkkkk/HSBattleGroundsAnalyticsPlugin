@@ -16,6 +16,28 @@ namespace HDTplugins.Services
 {
     public class BgGameProbe
     {
+        private sealed class GameV2TrinketPickSnapshot
+        {
+            public int ChoiceId { get; set; }
+            public int Turn { get; set; }
+            public int SourceDbfId { get; set; }
+            public string SourceCardId { get; set; }
+            public string[] OfferedCardIds { get; set; } = Array.Empty<string>();
+            public string[] OfferedDebugEntries { get; set; } = Array.Empty<string>();
+            public string ChosenCardId { get; set; }
+        }
+
+        private sealed class LegacyTrinketSnapshot
+        {
+            public int Round { get; set; }
+            public string[] Options { get; set; } = Array.Empty<string>();
+            public string[] EntityDebugEntries { get; set; } = Array.Empty<string>();
+            public string LesserTrinketCardId { get; set; }
+            public string GreaterTrinketCardId { get; set; }
+            public string HeroPowerTrinketCardId { get; set; }
+            public string HeroPowerTrinketType { get; set; }
+        }
+
         private const int PollIntervalMs = 250;
         private const int OfferedLogThrottleMs = 800;
         private const string PlaceholderHeroCardId = "TB_BaconShop_HERO_PH";
@@ -37,6 +59,12 @@ namespace HDTplugins.Services
         private long _nextAccountResolveTs;
         private long _nextAccountResolveLogTs;
         private string[] _currentHeroPowerCardIds = Array.Empty<string>();
+        private string _lastTimewarpOptionsSignature;
+        private string _lastGameV2TrinketDebugSignature;
+        private string _lastLegacyTrinketDebugSignature;
+        private bool _loggedMissingGameV2TrinketPath;
+        private const string MarinHeroPowerCardId = "BG30_HERO_304p";
+        private const string ButtonsHeroPowerCardId = "BG32_HERO_002p";
 
         private const int RatingResolveTimeoutMs = 45_000;
         private const int RatingPollMs = 500;
@@ -70,6 +98,16 @@ namespace HDTplugins.Services
         public string[] AvailableRaceNames { get; private set; } = Array.Empty<string>();
         public int AnomalyDbfId { get; private set; }
         public string AnomalyCardId { get; private set; }
+        public string[] LesserTrinketOptionCardIds { get; private set; } = Array.Empty<string>();
+        public string LesserTrinketCardId { get; private set; }
+        public string[] GreaterTrinketOptionCardIds { get; private set; } = Array.Empty<string>();
+        public string GreaterTrinketCardId { get; private set; }
+        public string HeroPowerTrinketCardId { get; private set; }
+        public string HeroPowerTrinketType { get; private set; }
+        public List<BgTimewarpEntry> TimewarpEntries { get; private set; } = new List<BgTimewarpEntry>();
+        public string QuestCardId { get; private set; }
+        public string QuestRewardCardId { get; private set; }
+        public bool QuestCompleted { get; private set; }
         public List<BgBoardMinionSnapshot> FinalBoard { get; private set; } = new List<BgBoardMinionSnapshot>();
         public List<BgTavernUpgradePoint> TavernUpgradeTimeline { get; private set; } = new List<BgTavernUpgradePoint>();
         public bool HasResolvedRatingAfter => RatingAfter > 0 && !_needResolveRatingAfter;
@@ -112,6 +150,20 @@ namespace HDTplugins.Services
             AvailableRaceNames = Array.Empty<string>();
             AnomalyDbfId = 0;
             AnomalyCardId = null;
+            LesserTrinketOptionCardIds = Array.Empty<string>();
+            LesserTrinketCardId = null;
+            GreaterTrinketOptionCardIds = Array.Empty<string>();
+            GreaterTrinketCardId = null;
+            HeroPowerTrinketCardId = null;
+            HeroPowerTrinketType = null;
+            TimewarpEntries = new List<BgTimewarpEntry>();
+            QuestCardId = null;
+            QuestRewardCardId = null;
+            QuestCompleted = false;
+            _lastTimewarpOptionsSignature = null;
+            _lastGameV2TrinketDebugSignature = null;
+            _lastLegacyTrinketDebugSignature = null;
+            _loggedMissingGameV2TrinketPath = false;
             FinalBoard = new List<BgBoardMinionSnapshot>();
             TavernUpgradeTimeline = new List<BgTavernUpgradePoint>();
             _lastRecordedTavernTier = -1;
@@ -140,6 +192,7 @@ namespace HDTplugins.Services
             {
                 TryResolveHeroAndHeroPower();
                 TryRefreshHeroPower();
+                TryRefreshTrinkets();
                 TryCacheFinalBoard();
                 HdtLog.Info($"[BGStats][HeroPower] finalize snapshot hero={HeroCardId ?? "null"} initial=[{string.Join(", ", InitialHeroPowerCardIds)}] combat=[{string.Join(", ", HeroPowerCardIds)}] current=[{string.Join(", ", _currentHeroPowerCardIds)}] boardCount={FinalBoard?.Count ?? 0}");
             }
@@ -180,6 +233,8 @@ namespace HDTplugins.Services
             TryCacheAnomaly();
             TryUpdateTurnScopedSnapshots();
             TryCapturePreCombatSnapshot();
+            TryRefreshTrinkets();
+            TryRefreshTimewarp();
             if (_needResolveAccountContext)
                 TryResolveAccountContext();
 
@@ -309,7 +364,7 @@ namespace HDTplugins.Services
 
                 OfferedHeroDbfIds = mergedHeroes;
                 OfferedHeroCardIds = mergedHeroes
-                    .Select(id => Cards.GetFromDbfId(id)?.Id)
+                    .Select(id => NormalizeBgHeroId(Cards.GetFromDbfId(id)?.Id))
                     .Where(id => !string.IsNullOrWhiteSpace(id))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToArray();
@@ -911,6 +966,698 @@ namespace HDTplugins.Services
             }
         }
 
+        private void TryRefreshTrinkets()
+        {
+            try
+            {
+                TryCacheTrinketsFromGameV2();
+                var legacySnapshot = CaptureLegacyTrinketSnapshot();
+                LogLegacyTrinketDebug(legacySnapshot);
+                ApplyLegacyHeroPowerTrinket(legacySnapshot);
+            }
+            catch (Exception ex)
+            {
+                HdtLog.Error("[BGStats] TryRefreshTrinkets failed: " + ex.Message);
+            }
+        }
+
+        private void TryRefreshTimewarp()
+        {
+            try
+            {
+                TryCaptureQuestShell();
+                TryCaptureTimewarpEntry();
+                TryUpdateTimewarpSelections();
+            }
+            catch (Exception ex)
+            {
+                HdtLog.Error("[BGStats] TryRefreshTimewarp failed: " + ex.Message);
+            }
+        }
+
+        private void TryCaptureQuestShell()
+        {
+            if (!string.IsNullOrWhiteSpace(QuestCardId) && !string.IsNullOrWhiteSpace(QuestRewardCardId))
+                return;
+
+            try
+            {
+                var questEntity = Core.Game?.Entities?.Values
+                    .FirstOrDefault(entity => entity != null
+                        && !string.IsNullOrWhiteSpace(entity.CardId)
+                        && entity.CardId.IndexOf("_Quest_", StringComparison.OrdinalIgnoreCase) >= 0);
+                if (questEntity != null)
+                {
+                    QuestCardId = questEntity.CardId;
+                    var rewardCardId = ResolveCardIdFromDbfTag(questEntity, "QUEST_REWARD_DATABASE_ID")
+                        ?? ResolveCardIdFromDbfTag(Core.Game?.PlayerEntity, "BACON_HERO_QUEST_REWARD_DATABASE_ID");
+                    if (!string.IsNullOrWhiteSpace(rewardCardId))
+                        QuestRewardCardId = rewardCardId;
+                    QuestCompleted = GetNamedTagValue(questEntity, "BACON_QUEST_COMPLETED") > 0
+                        || GetNamedTagValue(Core.Game?.PlayerEntity, "BACON_HERO_QUEST_REWARD_COMPLETED") > 0;
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        private void TryCaptureTimewarpEntry()
+        {
+            var options = GetPotentialTimewarpCardIds();
+            if (options.Length == 0)
+                return;
+
+            var type = ResolveCurrentTimewarpType();
+            if (string.IsNullOrWhiteSpace(type))
+                return;
+
+            var signature = type + "|" + string.Join("|", options.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
+            if (string.Equals(_lastTimewarpOptionsSignature, signature, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            var existingSameOptions = TimewarpEntries.Any(entry =>
+                string.Equals(entry.Type, type, StringComparison.OrdinalIgnoreCase)
+                && SameCardIdSet(entry.OptionCardIds, options));
+
+            TimewarpEntries.Add(new BgTimewarpEntry
+            {
+                Type = type,
+                IsExtra = existingSameOptions || TimewarpEntries.Any(entry => string.Equals(entry.Type, type, StringComparison.OrdinalIgnoreCase)),
+                OptionCardIds = options,
+                SelectedCardIds = Array.Empty<string>()
+            });
+            _lastTimewarpOptionsSignature = signature;
+            HdtLog.Info($"[BGStats][Timewarp] captured options type={type} extra={TimewarpEntries.Last().IsExtra} options=[{string.Join(", ", options)}]");
+        }
+
+        private void TryUpdateTimewarpSelections()
+        {
+            if (TimewarpEntries.Count == 0)
+                return;
+
+            var ownedCardIds = GetOwnedTimewarpCardIds();
+            if (ownedCardIds.Length == 0)
+                return;
+
+            foreach (var entry in TimewarpEntries)
+            {
+                if (entry == null || entry.OptionCardIds == null || entry.OptionCardIds.Length == 0)
+                    continue;
+
+                var selected = ownedCardIds
+                    .Where(cardId => entry.OptionCardIds.Contains(cardId, StringComparer.OrdinalIgnoreCase))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Take(4)
+                    .ToArray();
+                if (selected.Length > 0)
+                    entry.SelectedCardIds = selected;
+            }
+        }
+
+        private string[] GetPotentialTimewarpCardIds()
+        {
+            try
+            {
+                return Core.Game?.Entities?.Values
+                    .Where(entity => entity != null && IsPotentialTimewarpEntity(entity))
+                    .Select(entity => entity.CardId)
+                    .Where(cardId => !string.IsNullOrWhiteSpace(cardId))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Take(4)
+                    .ToArray() ?? Array.Empty<string>();
+            }
+            catch
+            {
+                return Array.Empty<string>();
+            }
+        }
+
+        private string[] GetOwnedTimewarpCardIds()
+        {
+            try
+            {
+                return Core.Game?.Entities?.Values
+                    .Where(entity => entity != null
+                        && !string.IsNullOrWhiteSpace(entity.CardId)
+                        && IsTimewarpCardId(entity.CardId)
+                        && IsControlledByPlayer(entity))
+                    .Select(entity => entity.CardId)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray() ?? Array.Empty<string>();
+            }
+            catch
+            {
+                return Array.Empty<string>();
+            }
+        }
+
+        private bool IsPotentialTimewarpEntity(dynamic entity)
+        {
+            try
+            {
+                var cardId = entity?.CardId as string;
+                if (string.IsNullOrWhiteSpace(cardId) || !IsTimewarpCardId(cardId))
+                    return false;
+
+                if (GetNamedTagValue(entity, "BACON_TIMEWARPED") > 0)
+                    return true;
+
+                var zone = GetZone(entity);
+                return zone == Zone.SETASIDE || zone == Zone.PLAY || zone == Zone.HAND || zone == Zone.SECRET || zone == Zone.GRAVEYARD;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private bool IsControlledByPlayer(dynamic entity)
+        {
+            try
+            {
+                var controller = GetNamedTagValue(entity, "CONTROLLER");
+                var playerId = Core.Game?.PlayerEntity?.Id ?? 0;
+                return controller > 0 && playerId > 0 && controller == playerId;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private string ResolveCurrentTimewarpType()
+        {
+            var round = ConvertTurnToRound(Core.Game?.GameEntity?.GetTag(GameTag.TURN) ?? 0);
+            var heroPowerIds = (_currentHeroPowerCardIds ?? Array.Empty<string>())
+                .Concat(HeroPowerCardIds ?? Array.Empty<string>())
+                .Concat(InitialHeroPowerCardIds ?? Array.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            if (heroPowerIds.Contains(ButtonsHeroPowerCardId, StringComparer.OrdinalIgnoreCase))
+                return "major";
+            if (heroPowerIds.Contains(MarinHeroPowerCardId, StringComparer.OrdinalIgnoreCase))
+                return "minor";
+            if (round >= 8)
+                return "major";
+            if (round > 0)
+                return "minor";
+
+            return string.Empty;
+        }
+
+        private static bool IsTimewarpCardId(string cardId)
+        {
+            if (string.IsNullOrWhiteSpace(cardId))
+                return false;
+
+            if (cardId.StartsWith("BG34_", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            try
+            {
+                var card = Cards.All.TryGetValue(cardId, out var exact) ? exact : Cards.All.Values.FirstOrDefault(x => string.Equals(x.Id, cardId, StringComparison.OrdinalIgnoreCase));
+                if (card == null)
+                    return false;
+
+                var name = card.Name ?? string.Empty;
+                var text = card.Text ?? string.Empty;
+                return name.IndexOf("Timewarp", StringComparison.OrdinalIgnoreCase) >= 0
+                    || name.IndexOf("Timewarped", StringComparison.OrdinalIgnoreCase) >= 0
+                    || text.IndexOf("Timewarp", StringComparison.OrdinalIgnoreCase) >= 0
+                    || text.IndexOf("Timewarped", StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private void TryCacheTrinketsFromGameV2()
+        {
+            var states = GetGameV2TrinketPickSnapshots();
+            var currentChoice = GetCurrentChoiceTrinketSnapshot();
+            LogGameV2TrinketDebug(states, currentChoice);
+
+            if (states.Count == 0 && currentChoice == null)
+                return;
+
+            var orderedStates = states
+                .OrderBy(state => state.Turn > 0 ? state.Turn : int.MaxValue)
+                .ThenBy(state => state.ChoiceId > 0 ? state.ChoiceId : int.MaxValue)
+                .ToList();
+
+            var resolvedTypes = new List<string>();
+            foreach (var state in orderedStates)
+            {
+                var pickType = ResolveGameV2TrinketPickType(state.Turn, resolvedTypes.Count);
+                if (string.IsNullOrWhiteSpace(pickType))
+                    continue;
+
+                ApplyGameV2TrinketPick(state.OfferedCardIds, state.ChosenCardId, pickType);
+                resolvedTypes.Add(pickType);
+            }
+
+            if (currentChoice == null)
+                return;
+
+            if (orderedStates.Any(state => state.ChoiceId > 0 && state.ChoiceId == currentChoice.ChoiceId))
+                return;
+
+            var currentChoiceType = ResolveGameV2TrinketPickType(currentChoice.Turn, resolvedTypes.Count);
+            if (string.IsNullOrWhiteSpace(currentChoiceType))
+                return;
+
+            ApplyGameV2TrinketPick(currentChoice.OfferedCardIds, currentChoice.ChosenCardId, currentChoiceType);
+        }
+
+        private void ApplyGameV2TrinketPick(string[] offeredCardIds, string chosenCardId, string pickType)
+        {
+            var normalizedOptions = NormalizeCardIds(offeredCardIds);
+            var normalizedChosen = NormalizeCardId(chosenCardId);
+            if (string.Equals(pickType, "lesser", StringComparison.OrdinalIgnoreCase))
+            {
+                if (normalizedOptions.Length > 0)
+                    LesserTrinketOptionCardIds = normalizedOptions;
+                if (!string.IsNullOrWhiteSpace(normalizedChosen))
+                    LesserTrinketCardId = normalizedChosen;
+                return;
+            }
+
+            if (string.Equals(pickType, "greater", StringComparison.OrdinalIgnoreCase))
+            {
+                if (normalizedOptions.Length > 0)
+                    GreaterTrinketOptionCardIds = normalizedOptions;
+                if (!string.IsNullOrWhiteSpace(normalizedChosen))
+                    GreaterTrinketCardId = normalizedChosen;
+            }
+        }
+
+        private LegacyTrinketSnapshot CaptureLegacyTrinketSnapshot()
+        {
+            var snapshot = new LegacyTrinketSnapshot
+            {
+                Round = ConvertTurnToRound(Core.Game?.GameEntity?.GetTag(GameTag.TURN) ?? 0)
+            };
+
+            var playerEntity = Core.Game?.PlayerEntity;
+            if (playerEntity != null)
+            {
+                snapshot.LesserTrinketCardId = ResolveCardIdFromDbfTag(playerEntity, "BACON_FIRST_TRINKET_DATABASE_ID");
+                snapshot.GreaterTrinketCardId = ResolveCardIdFromDbfTag(playerEntity, "BACON_SECOND_TRINKET_DATABASE_ID");
+                snapshot.HeroPowerTrinketCardId = ResolveCardIdFromDbfTag(playerEntity, "BACON_HEROPOWER_TRINKET_DATABASE_ID");
+                snapshot.HeroPowerTrinketType = ResolveHeroPowerTrinketType();
+            }
+
+            try
+            {
+                var potentialEntities = Core.Game?.Entities?.Values
+                    .Where(entity => entity != null && GetNamedTagValue(entity, "BACON_IS_POTENTIAL_TRINKET") > 0)
+                    .Select(entity => new
+                    {
+                        Id = GetIntProperty(entity, "Id"),
+                        CardId = NormalizeCardId(entity.CardId),
+                        Zone = GetZone(entity).ToString(),
+                        Controller = GetNamedTagValue(entity, "CONTROLLER"),
+                        CardType = GetCardType(entity.CardId)
+                    })
+                    .ToList();
+
+                if (potentialEntities != null)
+                {
+                    snapshot.Options = potentialEntities
+                        .Select(entity => entity.CardId)
+                        .Where(cardId => !string.IsNullOrWhiteSpace(cardId) && GetCardType(cardId) == CardType.BATTLEGROUND_TRINKET)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Take(4)
+                        .ToArray();
+                    snapshot.EntityDebugEntries = potentialEntities
+                        .Select(entity => $"id={entity.Id},card={entity.CardId ?? "null"},zone={entity.Zone},controller={entity.Controller},type={entity.CardType}")
+                        .ToArray();
+                }
+            }
+            catch
+            {
+                snapshot.Options = Array.Empty<string>();
+                snapshot.EntityDebugEntries = Array.Empty<string>();
+            }
+
+            return snapshot;
+        }
+
+        private void ApplyLegacyHeroPowerTrinket(LegacyTrinketSnapshot snapshot)
+        {
+            if (snapshot == null)
+                return;
+
+            var heroPowerTrinket = NormalizeCardId(snapshot.HeroPowerTrinketCardId);
+            if (!string.IsNullOrWhiteSpace(heroPowerTrinket))
+                HeroPowerTrinketCardId = heroPowerTrinket;
+
+            var heroPowerType = NormalizeCardId(snapshot.HeroPowerTrinketType);
+            if (!string.IsNullOrWhiteSpace(heroPowerType))
+                HeroPowerTrinketType = heroPowerType;
+        }
+
+        private void LogGameV2TrinketDebug(IReadOnlyList<GameV2TrinketPickSnapshot> states, GameV2TrinketPickSnapshot currentChoice)
+        {
+            var game = Core.Game;
+            if (game == null)
+                return;
+
+            var gameTypeName = game.GetType().FullName ?? game.GetType().Name;
+            var hasStateProperty = HasProperty(game, "BattlegroundsTrinketPickStates");
+            var hasCurrentChoiceProperty = HasProperty(game, "CurrentChoice");
+            var stateDebug = states == null || states.Count == 0
+                ? "none"
+                : string.Join(" || ", states.Select(BuildGameV2TrinketDebugEntry));
+            var currentChoiceDebug = currentChoice == null ? "none" : BuildGameV2TrinketDebugEntry(currentChoice);
+            var signature = string.Join("|",
+                gameTypeName,
+                hasStateProperty,
+                hasCurrentChoiceProperty,
+                stateDebug,
+                currentChoiceDebug);
+
+            if (string.Equals(signature, _lastGameV2TrinketDebugSignature, StringComparison.Ordinal))
+                return;
+
+            _lastGameV2TrinketDebugSignature = signature;
+            HdtLog.Info($"[BGStats][Trinket][GameV2Debug] gameType={gameTypeName} hasStates={hasStateProperty} hasCurrentChoice={hasCurrentChoiceProperty} states={stateDebug} currentChoice={currentChoiceDebug}");
+            if (!hasStateProperty && !hasCurrentChoiceProperty && !_loggedMissingGameV2TrinketPath)
+            {
+                _loggedMissingGameV2TrinketPath = true;
+                HdtLog.Warn("[BGStats][Trinket][GameV2Debug] BattlegroundsTrinketPickStates/CurrentChoice not found on current HDT game object.");
+            }
+        }
+
+        private void LogLegacyTrinketDebug(LegacyTrinketSnapshot snapshot)
+        {
+            if (snapshot == null)
+                return;
+
+            var signature = string.Join("|",
+                snapshot.Round,
+                string.Join(",", snapshot.Options ?? Array.Empty<string>()),
+                snapshot.LesserTrinketCardId ?? string.Empty,
+                snapshot.GreaterTrinketCardId ?? string.Empty,
+                snapshot.HeroPowerTrinketCardId ?? string.Empty,
+                snapshot.HeroPowerTrinketType ?? string.Empty,
+                string.Join(" || ", snapshot.EntityDebugEntries ?? Array.Empty<string>()));
+
+            if (string.Equals(signature, _lastLegacyTrinketDebugSignature, StringComparison.Ordinal))
+                return;
+
+            _lastLegacyTrinketDebugSignature = signature;
+            HdtLog.Info($"[BGStats][Trinket][LegacyDebug] round={snapshot.Round} options=[{string.Join(", ", snapshot.Options ?? Array.Empty<string>())}] lesser={snapshot.LesserTrinketCardId ?? "null"} greater={snapshot.GreaterTrinketCardId ?? "null"} heroPower={snapshot.HeroPowerTrinketCardId ?? "null"} heroPowerType={snapshot.HeroPowerTrinketType ?? "null"} entities=[{string.Join(" | ", snapshot.EntityDebugEntries ?? Array.Empty<string>())}]");
+        }
+
+        private List<GameV2TrinketPickSnapshot> GetGameV2TrinketPickSnapshots()
+        {
+            var snapshots = new List<GameV2TrinketPickSnapshot>();
+
+            try
+            {
+                foreach (var state in GetEnumerableValues(GetPropertyValue(Core.Game, "BattlegroundsTrinketPickStates")))
+                {
+                    var snapshot = BuildGameV2TrinketPickSnapshot(
+                        state,
+                        GetPropertyValue(state, "Params"),
+                        NormalizeNullableCardId(ResolveCardIdFromDbfId(GetNullableIntProperty(state, "ChosenTrinketDbfId"))),
+                        GetIntProperty(state, "ChoiceId"));
+                    if (snapshot != null)
+                        snapshots.Add(snapshot);
+                }
+            }
+            catch (Exception ex)
+            {
+                HdtLog.Warn("[BGStats][Trinket][GameV2Debug] failed to read BattlegroundsTrinketPickStates: " + ex.Message);
+            }
+
+            return snapshots;
+        }
+
+        private string ResolveCardIdFromDbfTag(dynamic entity, string tagName)
+        {
+            var dbfId = GetNamedTagValue(entity, tagName);
+            if (dbfId <= 0)
+                return null;
+
+            try
+            {
+                return Cards.GetFromDbfId(dbfId)?.Id;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private string ResolveHeroPowerTrinketType()
+        {
+            var heroPowerIds = (_currentHeroPowerCardIds ?? Array.Empty<string>())
+                .Concat(HeroPowerCardIds ?? Array.Empty<string>())
+                .Concat(InitialHeroPowerCardIds ?? Array.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (heroPowerIds.Contains(MarinHeroPowerCardId, StringComparer.OrdinalIgnoreCase))
+                return "lesser";
+            if (heroPowerIds.Contains(ButtonsHeroPowerCardId, StringComparer.OrdinalIgnoreCase))
+                return "greater";
+
+            return null;
+        }
+
+        private GameV2TrinketPickSnapshot GetCurrentChoiceTrinketSnapshot()
+        {
+            try
+            {
+                var choice = GetPropertyValue(Core.Game, "CurrentChoice");
+                if (choice == null)
+                    return null;
+
+                var offeredEntityIds = GetEnumerableValues(GetPropertyValue(choice, "OfferedEntityIds"))
+                    .Select(ConvertToInt)
+                    .Where(id => id > 0)
+                    .ToArray();
+                if (offeredEntityIds.Length == 0)
+                    return null;
+
+                var offeredCardIds = offeredEntityIds
+                    .Select(ResolveCardIdFromEntityId)
+                    .Where(cardId => !string.IsNullOrWhiteSpace(cardId) && GetCardType(cardId) == CardType.BATTLEGROUND_TRINKET)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                if (offeredCardIds.Length == 0)
+                    return null;
+
+                var chosenCardId = GetEnumerableValues(GetPropertyValue(choice, "ChosenEntityIds"))
+                    .Select(ConvertToInt)
+                    .Where(id => id > 0)
+                    .Select(ResolveCardIdFromEntityId)
+                    .FirstOrDefault(cardId => !string.IsNullOrWhiteSpace(cardId));
+
+                return new GameV2TrinketPickSnapshot
+                {
+                    ChoiceId = GetIntProperty(choice, "Id"),
+                    Turn = GetCurrentTurnNumber(),
+                    SourceCardId = string.Empty,
+                    SourceDbfId = 0,
+                    OfferedCardIds = offeredCardIds,
+                    OfferedDebugEntries = offeredEntityIds
+                        .Select(id => $"entity={id},card={ResolveCardIdFromEntityId(id) ?? "null"}")
+                        .ToArray(),
+                    ChosenCardId = NormalizeNullableCardId(chosenCardId)
+                };
+            }
+            catch (Exception ex)
+            {
+                HdtLog.Warn("[BGStats][Trinket][GameV2Debug] failed to read CurrentChoice: " + ex.Message);
+                return null;
+            }
+        }
+
+        private GameV2TrinketPickSnapshot BuildGameV2TrinketPickSnapshot(object state, object parameters, string chosenCardId, int choiceId)
+        {
+            if (parameters == null)
+                return null;
+
+            var offered = new List<string>();
+            var offeredDebug = new List<string>();
+            foreach (var offeredTrinket in GetEnumerableValues(GetPropertyValue(parameters, "OfferedTrinkets")))
+            {
+                var dbfId = GetNullableIntProperty(offeredTrinket, "TrinketDbfId");
+                var cardId = NormalizeNullableCardId(ResolveCardIdFromDbfId(dbfId));
+                var extraData = GetNullableIntProperty(offeredTrinket, "ExtraData") ?? 0;
+                if (!string.IsNullOrWhiteSpace(cardId))
+                    offered.Add(cardId);
+                offeredDebug.Add($"dbf={dbfId?.ToString() ?? "null"},card={cardId ?? "null"},extra={extraData}");
+            }
+
+            if (offered.Count == 0)
+                return null;
+
+            return new GameV2TrinketPickSnapshot
+            {
+                ChoiceId = choiceId,
+                Turn = GetIntProperty(parameters, "Turn"),
+                SourceDbfId = GetIntProperty(parameters, "SourceDbfId"),
+                SourceCardId = NormalizeNullableCardId(ResolveCardIdFromDbfId(GetNullableIntProperty(parameters, "SourceDbfId"))),
+                OfferedCardIds = offered
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray(),
+                OfferedDebugEntries = offeredDebug.ToArray(),
+                ChosenCardId = NormalizeNullableCardId(chosenCardId)
+            };
+        }
+
+        private string BuildGameV2TrinketDebugEntry(GameV2TrinketPickSnapshot snapshot)
+        {
+            if (snapshot == null)
+                return "null";
+
+            return $"choice={snapshot.ChoiceId},turn={snapshot.Turn},sourceDbf={snapshot.SourceDbfId},sourceCard={snapshot.SourceCardId ?? "null"},offered=[{string.Join(", ", snapshot.OfferedCardIds ?? Array.Empty<string>())}],chosen={snapshot.ChosenCardId ?? "null"},detail=[{string.Join(" | ", snapshot.OfferedDebugEntries ?? Array.Empty<string>())}]";
+        }
+
+        private string ResolveGameV2TrinketPickType(int turn, int existingResolvedCount)
+        {
+            if (turn > 0)
+            {
+                if (turn <= 6)
+                    return "lesser";
+                if (turn >= 9)
+                    return "greater";
+            }
+
+            if (existingResolvedCount == 0)
+                return "lesser";
+            if (existingResolvedCount == 1)
+                return "greater";
+
+            return string.Empty;
+        }
+
+        private int GetCurrentTurnNumber()
+        {
+            try
+            {
+                var method = Core.Game?.GetType().GetMethod("GetTurnNumber", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (method != null)
+                    return ConvertToInt(method.Invoke(Core.Game, null));
+            }
+            catch
+            {
+            }
+
+            return ConvertTurnToRound(Core.Game?.GameEntity?.GetTag(GameTag.TURN) ?? 0);
+        }
+
+        private string ResolveCardIdFromEntityId(int entityId)
+        {
+            try
+            {
+                if (entityId <= 0)
+                    return null;
+
+                if (Core.Game?.Entities != null && Core.Game.Entities.TryGetValue(entityId, out var entity))
+                    return NormalizeNullableCardId(entity?.CardId);
+            }
+            catch
+            {
+            }
+
+            return null;
+        }
+
+        private string ResolveCardIdFromDbfId(int? dbfId)
+        {
+            if (!dbfId.HasValue || dbfId.Value <= 0)
+                return null;
+
+            try
+            {
+                return Cards.GetFromDbfId(dbfId.Value)?.Id;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private string[] NormalizeCardIds(IEnumerable<string> cardIds)
+        {
+            return cardIds?
+                .Select(NormalizeCardId)
+                .Where(cardId => !string.IsNullOrWhiteSpace(cardId))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray() ?? Array.Empty<string>();
+        }
+
+        private string NormalizeCardId(string cardId)
+        {
+            return string.IsNullOrWhiteSpace(cardId) ? string.Empty : cardId.Trim();
+        }
+
+        private string NormalizeNullableCardId(string cardId)
+        {
+            var normalized = NormalizeCardId(cardId);
+            return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
+        }
+
+        private bool HasProperty(object target, string propertyName)
+        {
+            if (target == null || string.IsNullOrWhiteSpace(propertyName))
+                return false;
+
+            return target.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance) != null
+                || target.GetType().GetField(propertyName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance) != null;
+        }
+
+        private IEnumerable<object> GetEnumerableValues(object value)
+        {
+            if (value is System.Collections.IEnumerable enumerable && !(value is string))
+            {
+                foreach (var item in enumerable)
+                    yield return item;
+            }
+        }
+
+        private int? GetNullableIntProperty(object target, string propertyName)
+        {
+            var value = GetPropertyValue(target, propertyName);
+            if (value == null)
+                return null;
+
+            if (value is int direct)
+                return direct;
+
+            if (value is int?)
+                return (int?)value;
+
+            var nullableType = Nullable.GetUnderlyingType(value.GetType());
+            if (nullableType == typeof(int))
+                return (int?)value;
+
+            int parsed;
+            return int.TryParse(value.ToString(), out parsed) ? parsed : (int?)null;
+        }
+
+        private int ConvertToInt(object value)
+        {
+            if (value is int direct)
+                return direct;
+
+            if (value is int?)
+                return ((int?)value) ?? 0;
+
+            int parsed;
+            return value != null && int.TryParse(value.ToString(), out parsed) ? parsed : 0;
+        }
+
         private void TryUpdateTurnScopedSnapshots()
         {
             try
@@ -1168,8 +1915,13 @@ namespace HDTplugins.Services
                 if (target == null || string.IsNullOrWhiteSpace(propertyName))
                     return null;
 
-                var prop = target.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
-                return prop?.GetValue(target, null);
+                var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+                var prop = target.GetType().GetProperty(propertyName, flags);
+                if (prop != null)
+                    return prop.GetValue(target, null);
+
+                var field = target.GetType().GetField(propertyName, flags);
+                return field?.GetValue(target);
             }
             catch
             {
@@ -1415,27 +2167,7 @@ namespace HDTplugins.Services
 
         private string NormalizeBgHeroId(string heroCardId)
         {
-            if (string.IsNullOrEmpty(heroCardId))
-                return heroCardId;
-
-            try
-            {
-                var asm = typeof(Core).Assembly;
-                var t = asm.GetType("Hearthstone_Deck_Tracker.Hearthstone.BattlegroundsUtils");
-                var mi = t?.GetMethod("GetOriginalHeroId", new[] { typeof(string) });
-                var res = mi?.Invoke(null, new object[] { heroCardId }) as string;
-                if (!string.IsNullOrEmpty(res))
-                    return res;
-            }
-            catch { }
-
-            var idx = heroCardId.IndexOf("_SKIN_", StringComparison.OrdinalIgnoreCase);
-            if (idx > 0)
-                return heroCardId.Substring(0, idx);
-            idx = heroCardId.IndexOf("_ALT_", StringComparison.OrdinalIgnoreCase);
-            if (idx > 0)
-                return heroCardId.Substring(0, idx);
-            return heroCardId;
+            return HeroIdNormalizer.Normalize(heroCardId);
         }
 
         private static bool SameArray(int[] a, int[] b)

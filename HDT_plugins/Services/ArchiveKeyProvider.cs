@@ -14,9 +14,9 @@ namespace HDTplugins.Services
     {
         private static readonly ArchiveVersionInfo[] KnownArchives =
         {
-            new ArchiveVersionInfo { Key = "season12_patch35_0", DisplayName = "season12 patch35.0", PatchVersion = "35.0" },
-            new ArchiveVersionInfo { Key = "season12_patch34_6", DisplayName = "season12 patch34.6", PatchVersion = "34.6" },
-            new ArchiveVersionInfo { Key = "season11_patch33_2", DisplayName = "season11 patch33.2", PatchVersion = "33.2" }
+            new ArchiveVersionInfo { Key = "season12_patch35_0", DisplayName = "season12 patch35.0", RawVersion = "35.0", PatchVersion = "35.0" },
+            new ArchiveVersionInfo { Key = "season12_patch34_6", DisplayName = "season12 patch34.6", RawVersion = "34.6", PatchVersion = "34.6" },
+            new ArchiveVersionInfo { Key = "season11_patch33_2", DisplayName = "season11 patch33.2", RawVersion = "33.2", PatchVersion = "33.2" }
         };
 
         public static IReadOnlyList<ArchiveVersionInfo> GetKnownArchives()
@@ -42,7 +42,8 @@ namespace HDTplugins.Services
                 var info = Clone(matched);
                 info.DisplayName = displayName;
                 info.Key = BuildArchiveKeyFromRawVersion(detectedRawVersion, info.DisplayName);
-                info.PatchVersion = detectedRawVersion;
+                info.RawVersion = detectedRawVersion;
+                info.PatchVersion = ExtractPatchVersion(detectedRawVersion);
                 info.IsDetected = true;
                 return info;
             }
@@ -51,7 +52,8 @@ namespace HDTplugins.Services
             {
                 Key = BuildArchiveKeyFromRawVersion(detectedRawVersion, displayName),
                 DisplayName = displayName,
-                PatchVersion = detectedRawVersion,
+                RawVersion = detectedRawVersion,
+                PatchVersion = ExtractPatchVersion(detectedRawVersion),
                 IsDetected = true
             };
         }
@@ -66,14 +68,64 @@ namespace HDTplugins.Services
         public static ArchiveVersionInfo CreateFromStoredLabel(string key, string displayName)
         {
             var name = string.IsNullOrWhiteSpace(displayName) ? BuildDisplayNameFromKey(key) : displayName.Trim();
-            var match = Regex.Match(name, "(\\d+\\.\\d+)");
+            var rawVersionFromKey = ExtractRawVersionFromKey(key);
+            var rawVersion = !string.IsNullOrWhiteSpace(rawVersionFromKey)
+                ? rawVersionFromKey
+                : (IsRawVersionText(name) ? name : string.Empty);
+            var patchVersion = ExtractPatchVersion(!string.IsNullOrWhiteSpace(rawVersion) ? rawVersion : name);
 
             return new ArchiveVersionInfo
             {
                 Key = string.IsNullOrWhiteSpace(key) ? BuildArchiveKey(name) : key,
                 DisplayName = name,
-                PatchVersion = match.Success ? match.Groups[1].Value : string.Empty
+                RawVersion = rawVersion,
+                PatchVersion = patchVersion
             };
+        }
+
+        public static string ExtractPatchVersion(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return string.Empty;
+
+            var match = Regex.Match(value, "(\\d+\\.\\d+)");
+            return match.Success ? match.Groups[1].Value : string.Empty;
+        }
+
+        public static bool IsRawVersionText(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return false;
+
+            var trimmed = value.Trim();
+            if (trimmed.IndexOf("Season", StringComparison.OrdinalIgnoreCase) >= 0)
+                return false;
+            if (trimmed.IndexOf("Patch", StringComparison.OrdinalIgnoreCase) >= 0 && trimmed.IndexOf(' ') >= 0)
+                return false;
+
+            return Regex.IsMatch(trimmed, "^\\d+(?:\\.\\d+)+(?:\\s*\\([^\\)]*\\))?$", RegexOptions.IgnoreCase);
+        }
+
+        public static string ExtractRawVersionFromKey(string key)
+        {
+            if (string.IsNullOrWhiteSpace(key) || !key.StartsWith("version_", StringComparison.OrdinalIgnoreCase))
+                return string.Empty;
+
+            var suffix = key.Substring("version_".Length).Trim('_');
+            if (string.IsNullOrWhiteSpace(suffix))
+                return string.Empty;
+
+            var parts = suffix.Split(new[] { '_' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0)
+                return string.Empty;
+            if (parts.Length <= 3)
+                return string.Join(".", parts);
+
+            var versionPart = string.Join(".", parts.Take(3));
+            var buildPart = string.Join("_", parts.Skip(3));
+            return string.IsNullOrWhiteSpace(buildPart)
+                ? versionPart
+                : versionPart + " (" + buildPart + ")";
         }
 
         public static string BuildArchiveKey(string displayName)
@@ -189,6 +241,7 @@ namespace HDTplugins.Services
             {
                 Key = source.Key,
                 DisplayName = source.DisplayName,
+                RawVersion = source.RawVersion,
                 PatchVersion = source.PatchVersion,
                 IsDetected = source.IsDetected
             };

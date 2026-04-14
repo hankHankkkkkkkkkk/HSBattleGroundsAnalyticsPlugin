@@ -24,39 +24,72 @@ namespace HDTplugins.Services
             HdtLog.Info("[BGStats] TAG 配置来源: " + ConfigPath);
         }
 
-        public IReadOnlyList<string> GetAvailableTags()
+        public IReadOnlyList<string> GetAvailableTags(string versionDisplayName = null)
         {
             Reload();
             var tags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var tag in _config.AvailableTags ?? new List<string>())
             {
-                if (!string.IsNullOrWhiteSpace(tag))
+                if (!string.IsNullOrWhiteSpace(tag) && IsManualTagVisible(tag, versionDisplayName))
                     tags.Add(tag.Trim());
             }
 
             foreach (var rule in _config.Rules ?? new List<LineupTagRule>())
             {
-                if (!string.IsNullOrWhiteSpace(rule.Tag))
+                if (!string.IsNullOrWhiteSpace(rule.Tag) && IsRuleVisible(rule, versionDisplayName))
                     tags.Add(rule.Tag.Trim());
             }
 
             return tags.OrderBy(x => x, StringComparer.CurrentCultureIgnoreCase).ToList();
         }
 
-        public IReadOnlyList<string> Evaluate(BgSnapshot snapshot)
+        public IReadOnlyList<string> Evaluate(BgSnapshot snapshot, string versionDisplayName = null)
         {
             Reload();
             if (snapshot == null)
                 return Array.Empty<string>();
 
             return (_config.Rules ?? new List<LineupTagRule>())
-                .Where(rule => !string.IsNullOrWhiteSpace(rule.Tag) && EvaluateCondition(rule.Conditions, snapshot))
+                .Where(rule => !string.IsNullOrWhiteSpace(rule.Tag)
+                    && IsRuleVisible(rule, versionDisplayName)
+                    && EvaluateCondition(rule.Conditions, snapshot))
                 .OrderByDescending(rule => rule.Priority)
                 .ThenBy(rule => rule.Tag, StringComparer.CurrentCultureIgnoreCase)
                 .Select(rule => rule.Tag.Trim())
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Take(3)
                 .ToList();
+        }
+
+        private static bool IsRuleVisible(LineupTagRule rule, string versionDisplayName)
+        {
+            if (rule == null)
+                return false;
+
+            var normalizedVersion = string.IsNullOrWhiteSpace(versionDisplayName) ? string.Empty : versionDisplayName.Trim();
+            var ranges = (rule.VersionRange ?? new List<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (ranges.Count == 0)
+                return true;
+
+            return ranges.Any(x => string.Equals(x, normalizedVersion, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private bool IsManualTagVisible(string tag, string versionDisplayName)
+        {
+            if (string.IsNullOrWhiteSpace(tag))
+                return false;
+
+            var relatedRules = (_config.Rules ?? new List<LineupTagRule>())
+                .Where(rule => string.Equals(rule.Tag, tag, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (relatedRules.Count == 0)
+                return true;
+
+            return relatedRules.Any(rule => IsRuleVisible(rule, versionDisplayName));
         }
 
         private void Reload()

@@ -33,11 +33,29 @@ namespace HDTplugins.Models
         public string AnomalyCardId { get; set; }
         public string AnomalyName { get; set; }
         public string[] FinalBoardCardIds { get; set; }
+        public string[] LesserTrinketOptionCardIds { get; set; }
+        public string LesserTrinketCardId { get; set; }
+        public string[] GreaterTrinketOptionCardIds { get; set; }
+        public string GreaterTrinketCardId { get; set; }
+        public string HeroPowerTrinketCardId { get; set; }
+        public string HeroPowerTrinketType { get; set; }
+        public List<BgTimewarpEntry> TimewarpEntries { get; set; } = new List<BgTimewarpEntry>();
+        public string QuestCardId { get; set; }
+        public string QuestRewardCardId { get; set; }
+        public bool QuestCompleted { get; set; }
 
         public List<BgBoardMinionSnapshot> FinalBoard { get; set; } = new List<BgBoardMinionSnapshot>();
         public List<BgTavernUpgradePoint> TavernUpgradeTimeline { get; set; } = new List<BgTavernUpgradePoint>();
         public List<string> AutoTags { get; set; } = new List<string>();
         public List<string> ManualTags { get; set; } = new List<string>();
+    }
+
+    public class BgTimewarpEntry
+    {
+        public string Type { get; set; }
+        public bool IsExtra { get; set; }
+        public string[] OptionCardIds { get; set; } = new string[0];
+        public string[] SelectedCardIds { get; set; } = new string[0];
     }
 }
 

@@ -12,6 +12,7 @@ namespace HDTplugins.Models
     {
         public string Tag { get; set; }
         public int Priority { get; set; } = 0;
+        public List<string> VersionRange { get; set; } = new List<string>();
         public LineupTagCondition Conditions { get; set; } = new LineupTagCondition();
     }
 

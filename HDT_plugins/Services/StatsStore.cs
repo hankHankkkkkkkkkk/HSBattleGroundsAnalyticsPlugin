@@ -19,6 +19,7 @@ namespace HDTplugins.Services
         private readonly HeroStatsAggregationService _heroStatsService = new HeroStatsAggregationService();
         private readonly LineupTagService _lineupTagService = new LineupTagService();
         private readonly VersionDisplayService _versionDisplayService = new VersionDisplayService();
+        private readonly TavernTempoAggregationService _tavernTempoService = new TavernTempoAggregationService();
 
         private string _dataDir;
         private string _archivesDir;
@@ -31,6 +32,7 @@ namespace HDTplugins.Services
         private string _activeFinalFilePath;
         private string _activePendingFilePath;
         private AccountRecord _activeMatchAccount;
+        private string _selectedArchiveKey;
 
         public string CurrentMatchId { get; private set; }
         public string CurrentMatchTimestampUtc { get; private set; }
@@ -38,6 +40,7 @@ namespace HDTplugins.Services
         public ArchiveVersionInfo CurrentArchive { get; private set; }
         public AccountRecord CurrentAccount { get; private set; }
         public string CurrentAccountKey => CurrentAccount?.Key;
+        public string SelectedArchiveKey => _selectedArchiveKey;
         public string FinalFilePath => _finalFilePath;
         public string TagConfigPath => _lineupTagService.ConfigPath;
         public string TablesDirectoryPath => _tablesDir;
@@ -81,15 +84,16 @@ namespace HDTplugins.Services
             }
         }
 
-        public IReadOnlyList<string> GetAvailableTags()
+        public IReadOnlyList<string> GetAvailableTags(BgSnapshot snapshot = null)
         {
-            return _lineupTagService.GetAvailableTags();
+            return _lineupTagService.GetAvailableTags(GetSnapshotVersionDisplayName(snapshot));
         }
 
         public AccountRecord InitializeSelectedAccount(string preferredAccountKey)
         {
             var resolved = ResolveExistingAccount(preferredAccountKey) ?? GetMostRecentAccount() ?? GetAvailableAccounts().FirstOrDefault() ?? CreateUnknownAccount();
             SetCurrentAccountInternal(resolved);
+            RefreshLatestRecordedArchiveForDisplay();
             return CurrentAccount;
         }
 
@@ -231,6 +235,7 @@ namespace HDTplugins.Services
 
                 if (raceSnapshots.Count > 0)
                 {
+                    row.PickRate = snapshots.Count == 0 ? 0 : raceSnapshots.Count / (double)snapshots.Count;
                     row.AveragePlacement = raceSnapshots.Average(x => x.Placement);
                     row.FirstRate = raceSnapshots.Count(x => x.Placement == 1) / (double)raceSnapshots.Count;
                     row.ScoreRate = raceSnapshots.Count(x => x.Placement < normalizedScoreLine) / (double)raceSnapshots.Count;
@@ -278,15 +283,25 @@ namespace HDTplugins.Services
 
         public IReadOnlyList<ArchiveVersionInfo> GetRecordedArchives()
         {
-            return GetRecordedArchivesInternal();
+            return BuildDisplayArchives(GetRecordedArchivesInternal());
         }
 
         public ArchiveVersionInfo SetArchiveByKey(string archiveKey)
         {
-            var info = GetAvailableArchives().FirstOrDefault(x => string.Equals(x.Key, archiveKey, StringComparison.OrdinalIgnoreCase))
-                ?? ArchiveKeyProvider.CreateFromStoredLabel(archiveKey, null);
+            var normalizedKey = string.IsNullOrWhiteSpace(archiveKey) ? string.Empty : archiveKey.Trim();
+            var displayItem = BuildDisplayArchives(GetRecordedArchivesInternal())
+                .FirstOrDefault(x => string.Equals(x.Key, normalizedKey, StringComparison.OrdinalIgnoreCase));
+            if (displayItem != null && IsVirtualArchiveSelection(displayItem.Key))
+            {
+                _selectedArchiveKey = displayItem.Key;
+                return displayItem;
+            }
+
+            var info = GetAvailableArchives().FirstOrDefault(x => string.Equals(x.Key, normalizedKey, StringComparison.OrdinalIgnoreCase))
+                ?? ArchiveKeyProvider.CreateFromStoredLabel(normalizedKey, null);
             SetArchiveInternal(info);
-            return CurrentArchive;
+            _selectedArchiveKey = info.Key;
+            return GetSelectedArchiveForDisplay();
         }
 
         public ArchiveVersionInfo ConfirmCurrentArchiveForMatch()
@@ -299,13 +314,26 @@ namespace HDTplugins.Services
 
         public ArchiveVersionInfo GetLatestRecordedArchiveForDisplay()
         {
-            return GetMostRecentRecordedArchive() ?? CurrentArchive;
+            return GetMostRecentRecordedArchive(CurrentAccountKey) ?? GetMostRecentRecordedArchive() ?? GetSelectedArchiveForDisplay() ?? CurrentArchive;
+        }
+
+        public ArchiveVersionInfo GetSelectedArchiveForDisplay()
+        {
+            var displayItem = BuildDisplayArchives(GetRecordedArchivesInternal())
+                .FirstOrDefault(x => string.Equals(x.Key, _selectedArchiveKey, StringComparison.OrdinalIgnoreCase));
+            if (displayItem != null)
+                return displayItem;
+
+            return CurrentArchive;
         }
 
         public string GetArchiveDisplayName(ArchiveVersionInfo archive)
         {
             if (archive == null)
                 return string.Empty;
+
+            if (IsVirtualArchiveSelection(archive.Key))
+                return archive.DisplayName ?? string.Empty;
 
             var rawVersion = GetArchiveRawVersion(archive);
             if (!string.IsNullOrWhiteSpace(rawVersion))
@@ -322,16 +350,27 @@ namespace HDTplugins.Services
             return _versionDisplayService.RememberAndMapVersion(rawVersion);
         }
 
+        public bool ShouldDefaultToTrinketStatsPage()
+        {
+            return _versionDisplayService.SelectionContainsDisplayToken(_selectedArchiveKey, GetRecordedArchivesInternal(), "Season13");
+        }
+
+        public bool ShouldShowTrinketDetails(BgSnapshot snapshot)
+        {
+            return GetSnapshotVersionDisplayName(snapshot).IndexOf("Season13", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
         public ArchiveVersionInfo RefreshLatestRecordedArchiveForDisplay()
         {
-            var latest = GetMostRecentRecordedArchive();
+            var latest = GetMostRecentRecordedArchive(CurrentAccountKey) ?? GetMostRecentRecordedArchive();
             if (latest == null)
-                return CurrentArchive;
+                return GetSelectedArchiveForDisplay() ?? CurrentArchive;
 
             if (!string.Equals(CurrentArchive?.Key, latest.Key, StringComparison.OrdinalIgnoreCase))
                 SetArchiveInternal(latest);
 
-            return CurrentArchive;
+            _selectedArchiveKey = latest.Key;
+            return GetSelectedArchiveForDisplay();
         }
 
         public void ResetMatch()
@@ -371,6 +410,131 @@ namespace HDTplugins.Services
         public HeroStatsSummary LoadHeroStats(double scoreLine)
         {
             return _heroStatsService.BuildSummary(LoadSnapshots(), scoreLine);
+        }
+
+        public TavernTempoSummary LoadTavernTempoSummary()
+        {
+            return _tavernTempoService.BuildSummary(LoadSnapshots());
+        }
+
+        public TrinketStatsSummary LoadTrinketStats(double scoreLine, TrinketFilter filter)
+        {
+            var normalizedScoreLine = NormalizeScoreLine(scoreLine);
+            var snapshots = LoadSnapshots();
+            var rows = new Dictionary<string, List<BgSnapshot>>(StringComparer.OrdinalIgnoreCase);
+            var eligibleSnapshots = snapshots
+                .Where(snapshot => ShouldShowTrinketDetails(snapshot))
+                .ToList();
+
+            foreach (var snapshot in eligibleSnapshots)
+            {
+                foreach (var cardId in GetSnapshotTrinketCardIds(snapshot, filter))
+                {
+                    if (!rows.TryGetValue(cardId, out var group))
+                    {
+                        group = new List<BgSnapshot>();
+                        rows[cardId] = group;
+                    }
+
+                    if (!group.Contains(snapshot))
+                        group.Add(snapshot);
+                }
+            }
+
+            return new TrinketStatsSummary
+            {
+                Filter = filter,
+                EligibleMatches = eligibleSnapshots.Count,
+                Rows = rows
+                    .Select(pair => new TrinketStatsRow
+                    {
+                        CardId = pair.Key,
+                        CardName = GameTextService.GetCardName(pair.Key, pair.Key),
+                        MatchCount = pair.Value.Count,
+                        PickRate = eligibleSnapshots.Count == 0 ? 0 : pair.Value.Count / (double)eligibleSnapshots.Count,
+                        FirstRate = pair.Value.Count == 0 ? 0 : pair.Value.Count(x => x.Placement == 1) / (double)pair.Value.Count,
+                        ScoreRate = pair.Value.Count == 0 ? 0 : pair.Value.Count(x => x.Placement < normalizedScoreLine) / (double)pair.Value.Count
+                    })
+                    .OrderByDescending(x => x.MatchCount)
+                    .ThenBy(x => x.CardName, StringComparer.CurrentCultureIgnoreCase)
+                    .ToList()
+            };
+        }
+
+        public TimewarpStatsSummary LoadTimewarpStats(double scoreLine, TimewarpFilter filter)
+        {
+            var normalizedScoreLine = NormalizeScoreLine(scoreLine);
+            var snapshots = LoadSnapshots();
+            var eligibleSnapshots = snapshots
+                .Where(snapshot => (snapshot.TimewarpEntries ?? new List<BgTimewarpEntry>()).Any(entry => IsMatchingTimewarpEntry(entry, filter)))
+                .ToList();
+            var appearances = new Dictionary<string, List<BgSnapshot>>(StringComparer.OrdinalIgnoreCase);
+            var picks = new Dictionary<string, List<BgSnapshot>>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var snapshot in eligibleSnapshots)
+            {
+                var entries = (snapshot.TimewarpEntries ?? new List<BgTimewarpEntry>())
+                    .Where(entry => IsMatchingTimewarpEntry(entry, filter))
+                    .ToList();
+
+                foreach (var cardId in entries.SelectMany(entry => entry.OptionCardIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    if (!appearances.TryGetValue(cardId, out var group))
+                    {
+                        group = new List<BgSnapshot>();
+                        appearances[cardId] = group;
+                    }
+
+                    if (!group.Contains(snapshot))
+                        group.Add(snapshot);
+                }
+
+                foreach (var cardId in entries.SelectMany(entry => entry.SelectedCardIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    if (!picks.TryGetValue(cardId, out var group))
+                    {
+                        group = new List<BgSnapshot>();
+                        picks[cardId] = group;
+                    }
+
+                    if (!group.Contains(snapshot))
+                        group.Add(snapshot);
+                }
+            }
+
+            var cardIds = appearances.Keys
+                .Concat(picks.Keys)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            return new TimewarpStatsSummary
+            {
+                Filter = filter,
+                EligibleMatches = eligibleSnapshots.Count,
+                Rows = cardIds
+                    .Select(cardId =>
+                    {
+                        appearances.TryGetValue(cardId, out var appearanceSnapshots);
+                        picks.TryGetValue(cardId, out var pickSnapshots);
+                        appearanceSnapshots = appearanceSnapshots ?? new List<BgSnapshot>();
+                        pickSnapshots = pickSnapshots ?? new List<BgSnapshot>();
+                        return new TimewarpStatsRow
+                        {
+                            CardId = cardId,
+                            CardName = GameTextService.GetCardName(cardId, cardId),
+                            AppearanceCount = appearanceSnapshots.Count,
+                            PickCount = pickSnapshots.Count,
+                            AppearanceRate = eligibleSnapshots.Count == 0 ? 0 : appearanceSnapshots.Count / (double)eligibleSnapshots.Count,
+                            PickRate = appearanceSnapshots.Count == 0 ? 0 : pickSnapshots.Count / (double)appearanceSnapshots.Count,
+                            FirstRate = pickSnapshots.Count == 0 ? 0 : pickSnapshots.Count(x => x.Placement == 1) / (double)pickSnapshots.Count,
+                            ScoreRate = pickSnapshots.Count == 0 ? 0 : pickSnapshots.Count(x => x.Placement < normalizedScoreLine) / (double)pickSnapshots.Count
+                        };
+                    })
+                    .OrderByDescending(x => x.AppearanceCount)
+                    .ThenByDescending(x => x.PickCount)
+                    .ThenBy(x => x.CardName, StringComparer.CurrentCultureIgnoreCase)
+                    .ToList()
+            };
         }
 
         public BgSnapshot LoadSnapshot(string matchId)
@@ -442,7 +606,7 @@ namespace HDTplugins.Services
                     + $"\"matchId\":\"{JsonEscape(CurrentMatchId)}\"," 
                     + $"\"timestamp\":\"{JsonEscape(CurrentMatchTimestampUtc)}\"," 
                     + $"\"gameVersion\":\"{JsonEscape(GetArchiveRawVersion(_activeMatchArchive ?? CurrentArchive))}\"," 
-                    + $"\"heroCardId\":\"{JsonEscape(heroCardId)}\"," 
+                    + $"\"heroCardId\":\"{JsonEscape(HeroIdNormalizer.Normalize(heroCardId))}\"," 
                     + $"\"heroSkinCardId\":\"{JsonEscape(heroSkinCardId ?? string.Empty)}\"," 
                     + $"\"initialHeroPowerCardIds\":{SerializeStringArray(initialHeroPowerCardIds)}," 
                     + $"\"initialHeroPowerCardId\":\"{JsonEscape((initialHeroPowerCardIds ?? Array.Empty<string>()).FirstOrDefault() ?? string.Empty)}\""
@@ -456,7 +620,7 @@ namespace HDTplugins.Services
             }
         }
 
-        public void FinalizeIfPossible(string matchId, string timestamp, string heroCardId, string heroSkinCardId, string[] initialHeroPowerCardIds, string[] finalHeroPowerCardIds, int placement, int ratingBefore, int ratingAfter, string[] offeredHeroCardIds, string[] availableRaces, string anomalyCardId, IReadOnlyCollection<BgBoardMinionSnapshot> finalBoard, IReadOnlyCollection<BgTavernUpgradePoint> tavernUpgradeTimeline)
+        public void FinalizeIfPossible(string matchId, string timestamp, string heroCardId, string heroSkinCardId, string[] initialHeroPowerCardIds, string[] finalHeroPowerCardIds, int placement, int ratingBefore, int ratingAfter, string[] offeredHeroCardIds, string[] availableRaces, string anomalyCardId, IReadOnlyCollection<BgBoardMinionSnapshot> finalBoard, IReadOnlyCollection<BgTavernUpgradePoint> tavernUpgradeTimeline, string[] lesserTrinketOptionCardIds, string lesserTrinketCardId, string[] greaterTrinketOptionCardIds, string greaterTrinketCardId, string heroPowerTrinketCardId, string heroPowerTrinketType, IReadOnlyCollection<BgTimewarpEntry> timewarpEntries, string questCardId, string questRewardCardId, bool questCompleted)
         {
             try
             {
@@ -472,6 +636,13 @@ namespace HDTplugins.Services
                     .Where(x => x != null && !string.IsNullOrWhiteSpace(x.CardId))
                     .OrderBy(x => x.Position)
                     .ToList();
+                var normalizedHeroCardId = HeroIdNormalizer.Normalize(heroCardId);
+                var normalizedOfferedHeroCardIds = (offeredHeroCardIds ?? Array.Empty<string>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(HeroIdNormalizer.Normalize)
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
 
                 var snapshot = new BgSnapshot
                 {
@@ -485,8 +656,8 @@ namespace HDTplugins.Services
                     ServerInfo = (_activeMatchAccount ?? CurrentAccount)?.ServerInfo ?? string.Empty,
                     RegionCode = (_activeMatchAccount ?? CurrentAccount)?.RegionCode ?? string.Empty,
                     RegionName = (_activeMatchAccount ?? CurrentAccount)?.RegionName ?? string.Empty,
-                    HeroCardId = heroCardId,
-                    HeroName = GetCardName(heroCardId),
+                    HeroCardId = normalizedHeroCardId,
+                    HeroName = GetCardName(normalizedHeroCardId),
                     HeroSkinCardId = heroSkinCardId ?? string.Empty,
                     InitialHeroPowerCardIds = (initialHeroPowerCardIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Take(2).ToArray(),
                     InitialHeroPowerCardId = (initialHeroPowerCardIds ?? Array.Empty<string>()).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? string.Empty,
@@ -496,11 +667,28 @@ namespace HDTplugins.Services
                     RatingBefore = ratingBefore,
                     RatingAfter = ratingAfter,
                     RatingDelta = (ratingBefore > 0 && ratingAfter > 0) ? (ratingAfter - ratingBefore) : 0,
-                    OfferedHeroCardIds = (offeredHeroCardIds ?? Array.Empty<string>())
-                        .Where(x => !string.IsNullOrWhiteSpace(x))
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .ToArray(),
+                    OfferedHeroCardIds = normalizedOfferedHeroCardIds,
                     AvailableRaces = availableRaces ?? Array.Empty<string>(),
+                    LesserTrinketOptionCardIds = NormalizeCardIdArray(lesserTrinketOptionCardIds),
+                    LesserTrinketCardId = NormalizeText(lesserTrinketCardId) ?? string.Empty,
+                    GreaterTrinketOptionCardIds = NormalizeCardIdArray(greaterTrinketOptionCardIds),
+                    GreaterTrinketCardId = NormalizeText(greaterTrinketCardId) ?? string.Empty,
+                    HeroPowerTrinketCardId = NormalizeText(heroPowerTrinketCardId) ?? string.Empty,
+                    HeroPowerTrinketType = NormalizeTrinketType(heroPowerTrinketType),
+                    TimewarpEntries = (timewarpEntries ?? Array.Empty<BgTimewarpEntry>())
+                        .Where(x => x != null)
+                        .Select(entry => new BgTimewarpEntry
+                        {
+                            Type = NormalizeTimewarpType(entry.Type),
+                            IsExtra = entry.IsExtra,
+                            OptionCardIds = NormalizeCardIdArray(entry.OptionCardIds),
+                            SelectedCardIds = NormalizeCardIdArray(entry.SelectedCardIds)
+                        })
+                        .Where(entry => entry.OptionCardIds.Length > 0 || entry.SelectedCardIds.Length > 0)
+                        .ToList(),
+                    QuestCardId = NormalizeText(questCardId) ?? string.Empty,
+                    QuestRewardCardId = NormalizeText(questRewardCardId) ?? string.Empty,
+                    QuestCompleted = questCompleted,
                     AnomalyCardId = anomalyCardId ?? string.Empty,
                     AnomalyName = GetCardName(anomalyCardId),
                     FinalBoard = normalizedBoard,
@@ -512,7 +700,7 @@ namespace HDTplugins.Services
                         .ToList(),
                     ManualTags = new List<string>()
                 };
-                snapshot.AutoTags = _lineupTagService.Evaluate(snapshot).ToList();
+                snapshot.AutoTags = _lineupTagService.Evaluate(snapshot, GetSnapshotVersionDisplayName(snapshot)).ToList();
 
                 File.AppendAllText(finalFilePath, _serializer.Serialize(snapshot) + Environment.NewLine, Encoding.UTF8);
             }
@@ -535,7 +723,8 @@ namespace HDTplugins.Services
             _currentArchiveDir = archiveDir;
             EnsureLegacyArchiveMigratedToUnknown(archiveDir);
             CurrentArchive = target;
-            File.WriteAllText(Path.Combine(archiveDir, "label.txt"), target.DisplayName ?? string.Empty, Encoding.UTF8);
+            _selectedArchiveKey = target.Key;
+            File.WriteAllText(Path.Combine(archiveDir, "label.txt"), string.IsNullOrWhiteSpace(GetArchiveRawVersion(target)) ? (target.DisplayName ?? string.Empty) : GetArchiveRawVersion(target), Encoding.UTF8);
             SetCurrentAccountInternal(CurrentAccount ?? CreateUnknownAccount());
         }
 
@@ -552,7 +741,7 @@ namespace HDTplugins.Services
             _activeArchiveDir = archiveDir;
             EnsureLegacyArchiveMigratedToUnknown(archiveDir);
             _activeMatchArchive = target;
-            File.WriteAllText(Path.Combine(archiveDir, "label.txt"), target.DisplayName ?? string.Empty, Encoding.UTF8);
+            File.WriteAllText(Path.Combine(archiveDir, "label.txt"), string.IsNullOrWhiteSpace(GetArchiveRawVersion(target)) ? (target.DisplayName ?? string.Empty) : GetArchiveRawVersion(target), Encoding.UTF8);
         }
 
         private ArchiveVersionInfo ResolveInitialArchive()
@@ -561,7 +750,7 @@ namespace HDTplugins.Services
             if (HasRecordedMatches(preferred?.Key))
                 return preferred;
 
-            var latestRecorded = GetMostRecentRecordedArchive();
+            var latestRecorded = GetMostRecentRecordedArchive(CurrentAccountKey) ?? GetMostRecentRecordedArchive();
             if (latestRecorded != null)
                 return latestRecorded;
 
@@ -648,24 +837,13 @@ namespace HDTplugins.Services
             if (recordedArchives.Count == 0)
                 return Array.Empty<ArchiveVersionInfo>();
 
-            if (!string.IsNullOrWhiteSpace(CurrentArchive?.Key))
-            {
-                var exact = recordedArchives.FirstOrDefault(x => string.Equals(x.Key, CurrentArchive.Key, StringComparison.OrdinalIgnoreCase));
-                if (exact != null)
-                {
-                    var selectedDisplayName = GetArchiveDisplayName(exact);
-                    return recordedArchives
-                        .Where(x => string.Equals(GetArchiveDisplayName(x), selectedDisplayName, StringComparison.OrdinalIgnoreCase))
-                        .ToList();
-                }
-            }
-
-            var currentDisplayName = GetArchiveDisplayName(CurrentArchive);
-            if (string.IsNullOrWhiteSpace(currentDisplayName))
+            var selectionKey = string.IsNullOrWhiteSpace(_selectedArchiveKey) ? CurrentArchive?.Key : _selectedArchiveKey;
+            var selectedDisplayNames = _versionDisplayService.ResolveDisplayNamesForSelection(selectionKey, recordedArchives);
+            if (selectedDisplayNames == null || selectedDisplayNames.Count == 0)
                 return Array.Empty<ArchiveVersionInfo>();
 
             return recordedArchives
-                .Where(x => string.Equals(GetArchiveDisplayName(x), currentDisplayName, StringComparison.OrdinalIgnoreCase))
+                .Where(x => selectedDisplayNames.Contains(GetArchiveDisplayName(x), StringComparer.OrdinalIgnoreCase))
                 .ToList();
         }
 
@@ -699,6 +877,25 @@ namespace HDTplugins.Services
                 .ToList();
         }
 
+        private IReadOnlyList<ArchiveVersionInfo> BuildDisplayArchives(IReadOnlyList<ArchiveVersionInfo> recordedArchives)
+        {
+            return _versionDisplayService.BuildMenuItems(recordedArchives)
+                .Select(item => new ArchiveVersionInfo
+                {
+                    Key = item.Key,
+                    DisplayName = item.DisplayName,
+                    RawVersion = item.RawVersion,
+                    PatchVersion = item.PatchVersion
+                })
+                .ToList();
+        }
+
+        private static bool IsVirtualArchiveSelection(string archiveKey)
+        {
+            return !string.IsNullOrWhiteSpace(archiveKey)
+                && archiveKey.StartsWith("version_range_", StringComparison.OrdinalIgnoreCase);
+        }
+
         private ArchiveVersionInfo GetLatestRecordedArchive()
         {
             if (string.IsNullOrWhiteSpace(_archivesDir) || !Directory.Exists(_archivesDir))
@@ -710,13 +907,14 @@ namespace HDTplugins.Services
                 .FirstOrDefault();
         }
 
-        private ArchiveVersionInfo GetMostRecentRecordedArchive()
+        private ArchiveVersionInfo GetMostRecentRecordedArchive(string accountKey = null)
         {
             if (string.IsNullOrWhiteSpace(_archivesDir) || !Directory.Exists(_archivesDir))
                 return null;
 
             ArchiveVersionInfo bestArchive = null;
             DateTime bestTimestamp = default(DateTime);
+            var normalizedAccountKey = NormalizeArchiveLookupAccountKey(accountKey);
 
             foreach (var archiveDir in Directory.GetDirectories(_archivesDir))
             {
@@ -725,7 +923,20 @@ namespace HDTplugins.Services
                 if (!Directory.Exists(accountsDir))
                     continue;
 
-                foreach (var accountDir in Directory.GetDirectories(accountsDir))
+                IEnumerable<string> accountDirs;
+                if (normalizedAccountKey == null)
+                {
+                    accountDirs = Directory.GetDirectories(accountsDir);
+                }
+                else
+                {
+                    var targetAccountDir = Path.Combine(accountsDir, normalizedAccountKey);
+                    accountDirs = Directory.Exists(targetAccountDir)
+                        ? new[] { targetAccountDir }
+                        : Array.Empty<string>();
+                }
+
+                foreach (var accountDir in accountDirs)
                 {
                     var finalFilePath = Path.Combine(accountDir, "bg_stats.jsonl");
                     if (!File.Exists(finalFilePath) || new FileInfo(finalFilePath).Length <= 0)
@@ -748,6 +959,14 @@ namespace HDTplugins.Services
             }
 
             return bestArchive;
+        }
+
+        private string NormalizeArchiveLookupAccountKey(string accountKey)
+        {
+            var normalized = NormalizeText(accountKey);
+            if (string.IsNullOrWhiteSpace(normalized))
+                return null;
+            return normalized;
         }
 
         private bool HasRecordedMatches(string archiveKey)
@@ -787,15 +1006,37 @@ namespace HDTplugins.Services
             snapshot.ServerInfo = normalizedAccount.ServerInfo;
             snapshot.RegionCode = normalizedAccount.RegionCode;
             snapshot.RegionName = normalizedAccount.RegionName;
+            snapshot.HeroCardId = HeroIdNormalizer.Normalize(snapshot.HeroCardId);
             snapshot.InitialHeroPowerCardIds = NormalizeHeroPowerCardIds(snapshot.InitialHeroPowerCardIds, snapshot.InitialHeroPowerCardId);
             snapshot.InitialHeroPowerCardId = snapshot.InitialHeroPowerCardIds.FirstOrDefault() ?? string.Empty;
             snapshot.HeroPowerCardIds = NormalizeHeroPowerCardIds(snapshot.HeroPowerCardIds, snapshot.HeroPowerCardId);
             snapshot.HeroPowerCardId = snapshot.HeroPowerCardIds.FirstOrDefault() ?? string.Empty;
             snapshot.OfferedHeroCardIds = (snapshot.OfferedHeroCardIds ?? Array.Empty<string>())
                 .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(HeroIdNormalizer.Normalize)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
             snapshot.AvailableRaces = snapshot.AvailableRaces ?? Array.Empty<string>();
+            snapshot.LesserTrinketOptionCardIds = NormalizeCardIdArray(snapshot.LesserTrinketOptionCardIds);
+            snapshot.LesserTrinketCardId = NormalizeText(snapshot.LesserTrinketCardId) ?? string.Empty;
+            snapshot.GreaterTrinketOptionCardIds = NormalizeCardIdArray(snapshot.GreaterTrinketOptionCardIds);
+            snapshot.GreaterTrinketCardId = NormalizeText(snapshot.GreaterTrinketCardId) ?? string.Empty;
+            snapshot.HeroPowerTrinketCardId = NormalizeText(snapshot.HeroPowerTrinketCardId) ?? string.Empty;
+            snapshot.HeroPowerTrinketType = NormalizeTrinketType(snapshot.HeroPowerTrinketType);
+            snapshot.TimewarpEntries = (snapshot.TimewarpEntries ?? new List<BgTimewarpEntry>())
+                .Where(x => x != null)
+                .Select(entry => new BgTimewarpEntry
+                {
+                    Type = NormalizeTimewarpType(entry.Type),
+                    IsExtra = entry.IsExtra,
+                    OptionCardIds = NormalizeCardIdArray(entry.OptionCardIds),
+                    SelectedCardIds = NormalizeCardIdArray(entry.SelectedCardIds)
+                })
+                .Where(entry => entry.OptionCardIds.Length > 0 || entry.SelectedCardIds.Length > 0)
+                .ToList();
+            snapshot.QuestCardId = NormalizeText(snapshot.QuestCardId) ?? string.Empty;
+            snapshot.QuestRewardCardId = NormalizeText(snapshot.QuestRewardCardId) ?? string.Empty;
             snapshot.FinalBoardCardIds = snapshot.FinalBoardCardIds ?? Array.Empty<string>();
             snapshot.FinalBoard = (snapshot.FinalBoard ?? new List<BgBoardMinionSnapshot>())
                 .Where(x => x != null)
@@ -1076,6 +1317,34 @@ namespace HDTplugins.Services
             return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
         }
 
+        private static string[] NormalizeCardIdArray(IEnumerable<string> values)
+        {
+            return (values ?? Array.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(4)
+                .ToArray();
+        }
+
+        private static string NormalizeTrinketType(string value)
+        {
+            if (string.Equals(value, "lesser", StringComparison.OrdinalIgnoreCase))
+                return "lesser";
+            if (string.Equals(value, "greater", StringComparison.OrdinalIgnoreCase))
+                return "greater";
+            return string.Empty;
+        }
+
+        private static string NormalizeTimewarpType(string value)
+        {
+            if (string.Equals(value, "major", StringComparison.OrdinalIgnoreCase))
+                return "major";
+            if (string.Equals(value, "minor", StringComparison.OrdinalIgnoreCase))
+                return "minor";
+            return string.Empty;
+        }
+
         private static void MergeAccountRecord(IDictionary<string, AccountRecord> accounts, AccountRecord record)
         {
             if (record == null)
@@ -1244,6 +1513,53 @@ namespace HDTplugins.Services
             return string.IsNullOrWhiteSpace(value) ? fallback : value;
         }
 
+        private string GetSnapshotVersionDisplayName(BgSnapshot snapshot)
+        {
+            return snapshot == null ? string.Empty : GetGameVersionDisplayName(snapshot.GameVersion);
+        }
+
+        private static IReadOnlyList<string> GetSnapshotTrinketCardIds(BgSnapshot snapshot, TrinketFilter filter)
+        {
+            if (snapshot == null)
+                return Array.Empty<string>();
+
+            var cardIds = new List<string>();
+            if (filter == TrinketFilter.All || filter == TrinketFilter.Lesser)
+            {
+                if (!string.IsNullOrWhiteSpace(snapshot.LesserTrinketCardId))
+                    cardIds.Add(snapshot.LesserTrinketCardId);
+                if (string.Equals(snapshot.HeroPowerTrinketType, "lesser", StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrWhiteSpace(snapshot.HeroPowerTrinketCardId))
+                    cardIds.Add(snapshot.HeroPowerTrinketCardId);
+            }
+
+            if (filter == TrinketFilter.All || filter == TrinketFilter.Greater)
+            {
+                if (!string.IsNullOrWhiteSpace(snapshot.GreaterTrinketCardId))
+                    cardIds.Add(snapshot.GreaterTrinketCardId);
+                if (string.Equals(snapshot.HeroPowerTrinketType, "greater", StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrWhiteSpace(snapshot.HeroPowerTrinketCardId))
+                    cardIds.Add(snapshot.HeroPowerTrinketCardId);
+            }
+
+            return cardIds
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static bool IsMatchingTimewarpEntry(BgTimewarpEntry entry, TimewarpFilter filter)
+        {
+            if (entry == null)
+                return false;
+
+            if (filter == TimewarpFilter.All)
+                return true;
+            if (filter == TimewarpFilter.Major)
+                return string.Equals(entry.Type, "major", StringComparison.OrdinalIgnoreCase);
+            return string.Equals(entry.Type, "minor", StringComparison.OrdinalIgnoreCase);
+        }
+
         private string GetWriteFinalFilePath()
         {
             return string.IsNullOrWhiteSpace(_activeFinalFilePath) ? _finalFilePath : _activeFinalFilePath;
@@ -1291,6 +1607,15 @@ namespace HDTplugins.Services
         private static string GetArchiveRawVersion(ArchiveVersionInfo archive)
         {
             if (archive == null)
+                return string.Empty;
+
+            if (!string.IsNullOrWhiteSpace(archive.RawVersion))
+                return archive.RawVersion.Trim();
+
+            if (!string.IsNullOrWhiteSpace(archive.DisplayName) && ArchiveKeyProvider.IsRawVersionText(archive.DisplayName))
+                return archive.DisplayName.Trim();
+
+            if (!string.IsNullOrWhiteSpace(archive.DisplayName))
                 return string.Empty;
 
             if (!string.IsNullOrWhiteSpace(archive.PatchVersion))

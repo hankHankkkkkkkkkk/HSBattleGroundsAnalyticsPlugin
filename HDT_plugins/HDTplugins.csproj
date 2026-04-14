@@ -65,6 +65,7 @@
     <Compile Include="Models\BgBoardMinionSnapshot.cs" />
     <Compile Include="Models\BgKeywordState.cs" />
     <Compile Include="Models\BgTavernUpgradePoint.cs" />
+    <Compile Include="Models\TavernTempoModels.cs" />
     <Compile Include="Models\LineupTagConfig.cs" />
     <Compile Include="Models\PluginSettings.cs" />
     <Compile Include="Models\VersionDisplayConfig.cs" />
@@ -72,6 +73,7 @@
     <Compile Include="Models\HeroStats.cs" />
     <Compile Include="Models\HeroStatsModels.cs" />
     <Compile Include="Models\RaceStatsRow.cs" />
+    <Compile Include="Models\TrinketStatsModels.cs" />
     <Compile Include="Language\Strings.Designer.cs">
       <AutoGen>True</AutoGen>
       <DesignTime>True</DesignTime>
@@ -86,7 +88,9 @@
     <Compile Include="Services\EmbeddedJsonLoader.cs" />
     <Compile Include="Services\HeroStatsService.cs" />
     <Compile Include="Services\HeroStatsAggregationService.cs" />
+    <Compile Include="Services\TavernTempoAggregationService.cs" />
     <Compile Include="Services\GameTextService.cs" />
+    <Compile Include="Services\HeroIdNormalizer.cs" />
     <Compile Include="Services\Log.cs" />
     <Compile Include="Services\LineupTagService.cs" />
     <Compile Include="Services\PluginSettingsService.cs" />
@@ -113,6 +117,7 @@
   <ItemGroup>
     <Content Include=".gitignore" />
     <EmbeddedResource Include="Tables\lineup_tags.json" />
+    <EmbeddedResource Include="Tables\version_range.json" />
     <EmbeddedResource Include="Tables\version_display_mappings.json" />
     <EmbeddedResource Include="Tables\plugin_settings.json" />
   </ItemGroup>
