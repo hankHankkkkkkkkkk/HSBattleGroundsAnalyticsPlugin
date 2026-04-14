@@ -12,6 +12,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 
@@ -90,11 +91,32 @@ namespace HDTplugins.Views
         private TrinketFilter _currentTrinketFilter = TrinketFilter.All;
         private TimewarpFilter _currentTimewarpFilter = TimewarpFilter.All;
         private DateTime _anchorDate = DateTime.Today;
-        private static readonly Brush PositiveValueBrush = CreateBrush(88, 150, 96);
-        private static readonly Brush NegativeValueBrush = CreateBrush(198, 92, 84);
-        private static readonly Brush NeutralValueBrush = CreateBrush(138, 131, 121);
-        private static readonly Brush LightForegroundBrush = Brushes.White;
-        private static readonly Brush DarkForegroundBrush = CreateBrush(95, 88, 79);
+        private static readonly Brush WindowBackgroundBrush = CreateBrush(32, 34, 38);
+        private static readonly Brush SidebarBackgroundBrush = CreateBrush(43, 46, 52);
+        private static readonly Brush SidebarBorderBrush = CreateBrush(68, 72, 79);
+        private static readonly Brush MainPanelBackgroundBrush = CreateBrush(38, 41, 47);
+        private static readonly Brush SurfaceBrush = CreateBrush(49, 53, 60);
+        private static readonly Brush SurfaceAltBrush = CreateBrush(58, 63, 71);
+        private static readonly Brush SurfaceHoverBrush = CreateBrush(66, 71, 80);
+        private static readonly Brush AccentBrush = CreateBrush(94, 146, 214);
+        private static readonly Brush AccentHoverBrush = CreateBrush(117, 164, 224);
+        private static readonly Brush BorderSubtleBrush = CreateBrush(84, 89, 99);
+        private static readonly Brush BorderStrongBrush = CreateBrush(106, 112, 123);
+        private static readonly Brush PrimaryTextBrush = CreateBrush(243, 245, 248);
+        private static readonly Brush SecondaryTextBrush = CreateBrush(203, 209, 216);
+        private static readonly Brush MutedTextBrush = CreateBrush(148, 155, 166);
+        private static readonly Brush PositiveValueBrush = CreateBrush(110, 188, 124);
+        private static readonly Brush NegativeValueBrush = CreateBrush(224, 110, 104);
+        private static readonly Brush NeutralValueBrush = CreateBrush(158, 165, 174);
+        private static readonly Brush LightForegroundBrush = PrimaryTextBrush;
+        private static readonly Brush DarkForegroundBrush = SecondaryTextBrush;
+        private static readonly CornerRadius PanelCornerRadius = new CornerRadius(20);
+        private static readonly CornerRadius CardCornerRadius = new CornerRadius(14);
+        private static readonly CornerRadius ChipCornerRadius = new CornerRadius(10);
+        private static readonly CornerRadius SmallCornerRadius = new CornerRadius(8);
+        private static readonly Thickness DefaultBorderThickness = new Thickness(1);
+        private static readonly Effect PanelShadowEffect = CreateShadowEffect(18, 0.20, 0, 6);
+        private static readonly Effect CardShadowEffect = CreateShadowEffect(12, 0.16, 0, 4);
 
         public event Action<string> OpenMatchDetailRequested;
 
@@ -111,8 +133,11 @@ namespace HDTplugins.Views
             Height = 700;
             MinWidth = 980;
             MinHeight = 560;
-            Background = new SolidColorBrush(Color.FromRgb(35, 37, 39));
+            Background = WindowBackgroundBrush;
+            Foreground = PrimaryTextBrush;
+            FontFamily = new FontFamily("Segoe UI");
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
+            ConfigureWindowResources();
 
             _versionButton = new Button();
             _accountButton = new Button();
@@ -146,6 +171,153 @@ namespace HDTplugins.Views
             Closed += delegate { LocalizationService.LanguageChanged -= OnLanguageChanged; };
             LocalizationService.LanguageChanged += OnLanguageChanged;
             ApplyLocalization(false);
+        }
+
+        private void ConfigureWindowResources()
+        {
+            Resources[typeof(ComboBox)] = CreateComboBoxStyle();
+            Resources[typeof(ComboBoxItem)] = CreateComboBoxItemStyle();
+            Resources[typeof(CheckBox)] = CreateCheckBoxStyle();
+            Resources[typeof(ContextMenu)] = CreateContextMenuStyle();
+            Resources[typeof(MenuItem)] = CreateMenuItemStyle();
+            Resources[typeof(ToolTip)] = CreateToolTipStyle();
+            Resources[typeof(ScrollBar)] = CreateScrollBarStyle();
+        }
+
+        private static Style CreateComboBoxStyle()
+        {
+            var style = new Style(typeof(ComboBox));
+            style.Setters.Add(new Setter(Control.BackgroundProperty, SurfaceAltBrush));
+            style.Setters.Add(new Setter(Control.ForegroundProperty, PrimaryTextBrush));
+            style.Setters.Add(new Setter(Control.BorderBrushProperty, BorderSubtleBrush));
+            style.Setters.Add(new Setter(Control.BorderThicknessProperty, DefaultBorderThickness));
+            style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(10, 6, 10, 6)));
+            style.Setters.Add(new Setter(Control.FontSizeProperty, 14.0));
+            return style;
+        }
+
+        private static Style CreateComboBoxItemStyle()
+        {
+            var style = new Style(typeof(ComboBoxItem));
+            style.Setters.Add(new Setter(Control.BackgroundProperty, SurfaceBrush));
+            style.Setters.Add(new Setter(Control.ForegroundProperty, PrimaryTextBrush));
+            style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(10, 6, 10, 6)));
+            return style;
+        }
+
+        private static Style CreateCheckBoxStyle()
+        {
+            var style = new Style(typeof(CheckBox));
+            style.Setters.Add(new Setter(Control.ForegroundProperty, PrimaryTextBrush));
+            style.Setters.Add(new Setter(Control.FontSizeProperty, 15.0));
+            return style;
+        }
+
+        private static Style CreateContextMenuStyle()
+        {
+            var style = new Style(typeof(ContextMenu));
+            style.Setters.Add(new Setter(Control.BackgroundProperty, SurfaceBrush));
+            style.Setters.Add(new Setter(Control.ForegroundProperty, PrimaryTextBrush));
+            style.Setters.Add(new Setter(Control.BorderBrushProperty, BorderSubtleBrush));
+            style.Setters.Add(new Setter(Control.BorderThicknessProperty, DefaultBorderThickness));
+            return style;
+        }
+
+        private static Style CreateMenuItemStyle()
+        {
+            var style = new Style(typeof(MenuItem));
+            style.Setters.Add(new Setter(Control.BackgroundProperty, SurfaceBrush));
+            style.Setters.Add(new Setter(Control.ForegroundProperty, PrimaryTextBrush));
+            style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(10, 6, 10, 6)));
+            return style;
+        }
+
+        private static Style CreateToolTipStyle()
+        {
+            var style = new Style(typeof(ToolTip));
+            style.Setters.Add(new Setter(Control.BackgroundProperty, SurfaceBrush));
+            style.Setters.Add(new Setter(Control.ForegroundProperty, PrimaryTextBrush));
+            style.Setters.Add(new Setter(Control.BorderBrushProperty, BorderSubtleBrush));
+            style.Setters.Add(new Setter(Control.BorderThicknessProperty, DefaultBorderThickness));
+            style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(10, 8, 10, 8)));
+            return style;
+        }
+
+        private static Style CreateScrollBarStyle()
+        {
+            var style = new Style(typeof(ScrollBar));
+            style.Setters.Add(new Setter(Control.BackgroundProperty, SurfaceBrush));
+            style.Setters.Add(new Setter(Control.WidthProperty, 10.0));
+            return style;
+        }
+
+        private static void ApplyNavigationButtonChrome(Button button)
+        {
+            button.Background = Brushes.Transparent;
+            button.BorderBrush = Brushes.Transparent;
+            button.Foreground = SecondaryTextBrush;
+            button.Cursor = Cursors.Hand;
+        }
+
+        private static void ApplyChipButtonChrome(Button button, bool isActive)
+        {
+            button.Background = isActive ? AccentBrush : SurfaceAltBrush;
+            button.Foreground = PrimaryTextBrush;
+            button.BorderBrush = isActive ? AccentHoverBrush : BorderSubtleBrush;
+            button.BorderThickness = DefaultBorderThickness;
+            button.Cursor = Cursors.Hand;
+            button.FontWeight = isActive ? FontWeights.SemiBold : FontWeights.Normal;
+        }
+
+        private static Border CreatePanelBorder(Brush background, CornerRadius cornerRadius, Thickness padding, Thickness? margin = null)
+        {
+            return new Border
+            {
+                Background = background,
+                BorderBrush = BorderSubtleBrush,
+                BorderThickness = DefaultBorderThickness,
+                CornerRadius = cornerRadius,
+                Padding = padding,
+                Margin = margin ?? new Thickness(0),
+                Effect = PanelShadowEffect
+            };
+        }
+
+        private static Border CreateCardBorder(Brush background, Thickness padding, Thickness? margin = null)
+        {
+            return new Border
+            {
+                Background = background,
+                BorderBrush = BorderSubtleBrush,
+                BorderThickness = DefaultBorderThickness,
+                CornerRadius = CardCornerRadius,
+                Padding = padding,
+                Margin = margin ?? new Thickness(0),
+                Effect = CardShadowEffect
+            };
+        }
+
+        private static void StyleSummaryLabel(Label label)
+        {
+            label.Background = SurfaceAltBrush;
+            label.Foreground = PrimaryTextBrush;
+            label.BorderBrush = BorderSubtleBrush;
+            label.BorderThickness = DefaultBorderThickness;
+            label.Padding = new Thickness(10, 4, 10, 4);
+            label.FontSize = 14;
+            label.FontWeight = FontWeights.SemiBold;
+        }
+
+        private static DropShadowEffect CreateShadowEffect(double blurRadius, double opacity, double direction, double shadowDepth)
+        {
+            return new DropShadowEffect
+            {
+                Color = Colors.Black,
+                BlurRadius = blurRadius,
+                Opacity = opacity,
+                Direction = direction,
+                ShadowDepth = shadowDepth
+            };
         }
 
         public void Reload()
@@ -256,13 +428,8 @@ namespace HDTplugins.Views
 
         private Border BuildSidebar()
         {
-            var border = new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(190, 183, 172)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(118, 255, 240)),
-                BorderThickness = new Thickness(1),
-                Padding = new Thickness(16, 18, 16, 18)
-            };
+            var border = CreatePanelBorder(SidebarBackgroundBrush, PanelCornerRadius, new Thickness(16, 18, 16, 18));
+            border.BorderBrush = SidebarBorderBrush;
 
             var dock = new DockPanel();
             border.Child = dock;
@@ -270,9 +437,7 @@ namespace HDTplugins.Views
             _accountButton.HorizontalContentAlignment = HorizontalAlignment.Left;
             _accountButton.Padding = new Thickness(10, 12, 10, 12);
             _accountButton.Margin = new Thickness(0, 22, 0, 0);
-            _accountButton.Background = Brushes.Transparent;
-            _accountButton.BorderBrush = Brushes.Transparent;
-            _accountButton.Cursor = Cursors.Hand;
+            ApplyNavigationButtonChrome(_accountButton);
             _accountButton.Click += delegate { OpenAccountMenu(); };
             DockPanel.SetDock(_accountButton, Dock.Bottom);
             dock.Children.Add(_accountButton);
@@ -287,9 +452,7 @@ namespace HDTplugins.Views
             _versionButton.HorizontalContentAlignment = HorizontalAlignment.Left;
             _versionButton.Padding = new Thickness(10, 12, 10, 12);
             _versionButton.Margin = new Thickness(0, 0, 0, 0);
-            _versionButton.Background = Brushes.Transparent;
-            _versionButton.BorderBrush = Brushes.Transparent;
-            _versionButton.Cursor = Cursors.Hand;
+            ApplyNavigationButtonChrome(_versionButton);
             _versionButton.VerticalAlignment = VerticalAlignment.Stretch;
             _versionButton.Click += delegate { OpenVersionMenu(); };
             Grid.SetRow(_versionButton, 0);
@@ -308,11 +471,7 @@ namespace HDTplugins.Views
 
         private Border BuildMainPanel()
         {
-            var border = new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(241, 238, 233)),
-                Padding = new Thickness(24, 22, 24, 22)
-            };
+            var border = CreatePanelBorder(MainPanelBackgroundBrush, PanelCornerRadius, new Thickness(24, 22, 24, 22));
 
             var dock = new DockPanel();
             border.Child = dock;
@@ -324,7 +483,7 @@ namespace HDTplugins.Views
             _sectionTitle.Text = Loc.S("HistoryMatches_Title");
             _sectionTitle.FontSize = 22;
             _sectionTitle.FontWeight = FontWeights.SemiBold;
-            _sectionTitle.Foreground = new SolidColorBrush(Color.FromRgb(88, 80, 70));
+            _sectionTitle.Foreground = PrimaryTextBrush;
             _sectionTitle.Margin = new Thickness(0, 0, 0, 14);
             header.Children.Add(_sectionTitle);
 
@@ -360,12 +519,8 @@ namespace HDTplugins.Views
 
             _dateLabel.MinWidth = 220;
             _dateLabel.Margin = new Thickness(10, 0, 10, 0);
-            _dateLabel.Padding = new Thickness(10, 2, 10, 2);
-            _dateLabel.Background = new SolidColorBrush(Color.FromRgb(196, 189, 177));
-            _dateLabel.Foreground = Brushes.White;
             _dateLabel.HorizontalContentAlignment = HorizontalAlignment.Center;
-            _dateLabel.FontSize = 14;
-            _dateLabel.FontWeight = FontWeights.SemiBold;
+            StyleSummaryLabel(_dateLabel);
             _dateNavigator.Children.Add(_dateLabel);
 
             _nextDateButton.Click += delegate { ShiftAnchor(1); };
@@ -376,10 +531,8 @@ namespace HDTplugins.Views
             _historyToolbar.Children.Add(_dateNavigator);
 
             _summaryText.Margin = new Thickness(0, 10, 0, 0);
+            StyleSummaryLabel(_summaryText);
             _summaryText.Padding = new Thickness(12, 4, 12, 4);
-            _summaryText.Background = new SolidColorBrush(Color.FromRgb(196, 189, 177));
-            _summaryText.Foreground = Brushes.White;
-            _summaryText.FontSize = 14;
             _summaryText.HorizontalContentAlignment = HorizontalAlignment.Right;
             Grid.SetRow(_summaryText, 1);
             Grid.SetColumn(_summaryText, 2);
@@ -395,11 +548,9 @@ namespace HDTplugins.Views
                 HorizontalContentAlignment = HorizontalAlignment.Left,
                 FontSize = 18,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = Brushes.White,
-                Background = Brushes.Transparent,
-                BorderBrush = Brushes.Transparent,
-                Cursor = Cursors.Hand
+                Foreground = SecondaryTextBrush
             };
+            ApplyNavigationButtonChrome(button);
             button.Click += delegate
             {
                 _currentSection = section;
@@ -432,10 +583,9 @@ namespace HDTplugins.Views
                 Content = text,
                 Padding = new Thickness(14, 6, 14, 6),
                 Margin = new Thickness(0, 0, 10, 0),
-                Foreground = Brushes.White,
-                BorderBrush = Brushes.Transparent,
-                Cursor = Cursors.Hand
+                Foreground = PrimaryTextBrush
             };
+            ApplyChipButtonChrome(button, _currentRange == range);
             button.Click += delegate
             {
                 _currentRange = range;
@@ -450,17 +600,16 @@ namespace HDTplugins.Views
 
         private static Button CreateToolbarButton(string text)
         {
-            return new Button
+            var button = new Button
             {
                 Content = text,
                 Width = 26,
                 Height = 26,
-                Foreground = Brushes.White,
-                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
-                BorderBrush = Brushes.Transparent,
-                Cursor = Cursors.Hand,
+                Foreground = PrimaryTextBrush,
                 FontWeight = FontWeights.Bold
             };
+            ApplyChipButtonChrome(button, false);
+            return button;
         }
 
         private void RebuildContent()
@@ -548,11 +697,7 @@ namespace HDTplugins.Views
                 : LocalizationService.NormalizeCulture(_settingsService.Settings.Language).Name;
             var panel = new StackPanel { MaxWidth = 520 };
 
-            var card = new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
-                Padding = new Thickness(20)
-            };
+            var card = CreateCardBorder(SurfaceBrush, new Thickness(20));
             panel.Children.Add(card);
 
             var stack = new StackPanel();
@@ -563,14 +708,14 @@ namespace HDTplugins.Views
                 Text = Loc.S("Settings_Header"),
                 FontSize = 20,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = Brushes.White,
+                Foreground = PrimaryTextBrush,
                 Margin = new Thickness(0, 0, 0, 18)
             });
 
             stack.Children.Add(new TextBlock
             {
                 Text = Loc.S("Settings_LanguageLabel"),
-                Foreground = Brushes.White,
+                Foreground = SecondaryTextBrush,
                 FontSize = 14,
                 FontWeight = FontWeights.SemiBold,
                 Margin = new Thickness(0, 0, 0, 8)
@@ -593,7 +738,7 @@ namespace HDTplugins.Views
             stack.Children.Add(new TextBlock
             {
                 Text = Loc.S("Settings_ScoreLineLabel"),
-                Foreground = Brushes.White,
+                Foreground = SecondaryTextBrush,
                 FontSize = 14,
                 FontWeight = FontWeights.SemiBold,
                 Margin = new Thickness(0, 4, 0, 8)
@@ -621,7 +766,7 @@ namespace HDTplugins.Views
             stack.Children.Add(new TextBlock
             {
                 Text = Loc.S("Settings_HeroSortLabel"),
-                Foreground = Brushes.White,
+                Foreground = SecondaryTextBrush,
                 FontSize = 14,
                 FontWeight = FontWeights.SemiBold,
                 Margin = new Thickness(0, 4, 0, 8)
@@ -647,7 +792,7 @@ namespace HDTplugins.Views
             {
                 Content = Loc.S("Settings_AutoOpenOnStartup"),
                 IsChecked = _settingsService.Settings.AutoOpenOnStartup,
-                Foreground = Brushes.White,
+                Foreground = PrimaryTextBrush,
                 FontSize = 15,
                 FontWeight = FontWeights.SemiBold,
                 Margin = new Thickness(0, 0, 0, 8)
@@ -657,7 +802,7 @@ namespace HDTplugins.Views
             stack.Children.Add(new TextBlock
             {
                 Text = Loc.S("Settings_AutoOpenHint"),
-                Foreground = Brushes.White,
+                Foreground = MutedTextBrush,
                 FontSize = 12,
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, 0, 0, 18)
@@ -669,9 +814,10 @@ namespace HDTplugins.Views
                 Width = 96,
                 Height = 34,
                 HorizontalAlignment = HorizontalAlignment.Left,
-                Background = new SolidColorBrush(Color.FromRgb(126, 163, 209)),
-                Foreground = Brushes.White,
-                BorderBrush = Brushes.Transparent,
+                Background = AccentBrush,
+                Foreground = PrimaryTextBrush,
+                BorderBrush = AccentHoverBrush,
+                BorderThickness = DefaultBorderThickness,
                 FontSize = 14,
                 FontWeight = FontWeights.SemiBold
             };
@@ -716,7 +862,7 @@ namespace HDTplugins.Views
                 root.Children.Add(new TextBlock
                 {
                     Text = Loc.S("Common_NoData"),
-                    Foreground = new SolidColorBrush(Color.FromRgb(126, 118, 108)),
+                    Foreground = MutedTextBrush,
                     FontSize = 15,
                     Margin = new Thickness(0, 20, 0, 0)
                 });
@@ -772,12 +918,7 @@ namespace HDTplugins.Views
 
         private UIElement BuildRaceHeaderRow()
         {
-            var border = new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
-                Padding = new Thickness(14, 10, 14, 10),
-                Margin = new Thickness(0, 0, 0, 8)
-            };
+            var border = CreateCardBorder(SurfaceAltBrush, new Thickness(14, 10, 14, 10), new Thickness(0, 0, 0, 8));
 
             var grid = new Grid();
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.2, GridUnitType.Star) });
@@ -801,14 +942,12 @@ namespace HDTplugins.Views
             var button = new Button
             {
                 Content = Loc.S(resourceKey),
-                Background = Brushes.Transparent,
-                BorderBrush = Brushes.Transparent,
-                Foreground = Brushes.White,
                 FontSize = 14,
                 FontWeight = FontWeights.SemiBold,
-                HorizontalContentAlignment = columnIndex == 0 ? HorizontalAlignment.Left : HorizontalAlignment.Center,
-                Cursor = Cursors.Hand
+                HorizontalContentAlignment = columnIndex == 0 ? HorizontalAlignment.Left : HorizontalAlignment.Center
             };
+            ApplyNavigationButtonChrome(button);
+            button.Foreground = PrimaryTextBrush;
             button.Click += delegate
             {
                 if (_raceSortColumn == column)
@@ -829,14 +968,9 @@ namespace HDTplugins.Views
         {
             var container = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
 
-            var summaryBorder = new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(241, 238, 233)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(210, 205, 197)),
-                BorderThickness = new Thickness(1),
-                Padding = new Thickness(14, 12, 14, 12),
-                Cursor = Cursors.Hand
-            };
+            var summaryBorder = CreateCardBorder(SurfaceBrush, new Thickness(14, 12, 14, 12));
+            summaryBorder.BorderBrush = BorderStrongBrush;
+            summaryBorder.Cursor = Cursors.Hand;
 
             var summaryGrid = new Grid();
             summaryGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.2, GridUnitType.Star) });
@@ -888,12 +1022,7 @@ namespace HDTplugins.Views
 
         private UIElement BuildRaceDetail(RaceStatsRow row)
         {
-            var border = new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
-                Padding = new Thickness(16),
-                Margin = new Thickness(0, 2, 0, 0)
-            };
+            var border = CreateCardBorder(SurfaceAltBrush, new Thickness(16), new Thickness(0, 2, 0, 0));
 
             var root = new StackPanel();
             border.Child = root;
@@ -1058,7 +1187,7 @@ namespace HDTplugins.Views
                 root.Children.Add(new TextBlock
                 {
                     Text = Loc.S("Common_NoData"),
-                    Foreground = new SolidColorBrush(Color.FromRgb(126, 118, 108)),
+                    Foreground = MutedTextBrush,
                     FontSize = 15,
                     Margin = new Thickness(0, 20, 0, 0)
                 });
@@ -1113,12 +1242,7 @@ namespace HDTplugins.Views
 
         private UIElement BuildHeroOverviewCard(HeroStatsSummary summary)
         {
-            var border = new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
-                Padding = new Thickness(14, 10, 14, 10),
-                Margin = new Thickness(0, 0, 0, 10)
-            };
+            var border = CreateCardBorder(SurfaceAltBrush, new Thickness(14, 10, 14, 10), new Thickness(0, 0, 0, 10));
 
             var grid = new Grid();
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -1140,12 +1264,7 @@ namespace HDTplugins.Views
 
         private UIElement BuildHeroHeaderRow()
         {
-            var border = new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
-                Padding = new Thickness(14, 10, 14, 10),
-                Margin = new Thickness(0, 0, 0, 8)
-            };
+            var border = CreateCardBorder(SurfaceAltBrush, new Thickness(14, 10, 14, 10), new Thickness(0, 0, 0, 8));
 
             var grid = new Grid();
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.4, GridUnitType.Star) });
@@ -1169,7 +1288,7 @@ namespace HDTplugins.Views
             var block = new TextBlock
             {
                 Text = Loc.S(resourceKey),
-                Foreground = Brushes.White,
+                Foreground = PrimaryTextBrush,
                 FontSize = 14,
                 FontWeight = FontWeights.SemiBold,
                 HorizontalAlignment = centered ? HorizontalAlignment.Center : HorizontalAlignment.Left,
@@ -1184,14 +1303,12 @@ namespace HDTplugins.Views
             var button = new Button
             {
                 Content = Loc.S(resourceKey),
-                Background = Brushes.Transparent,
-                BorderBrush = Brushes.Transparent,
-                Foreground = Brushes.White,
                 FontSize = 14,
                 FontWeight = FontWeights.SemiBold,
-                HorizontalContentAlignment = HorizontalAlignment.Center,
-                Cursor = Cursors.Hand
+                HorizontalContentAlignment = HorizontalAlignment.Center
             };
+            ApplyNavigationButtonChrome(button);
+            button.Foreground = PrimaryTextBrush;
             button.Click += delegate
             {
                 if (_heroSortColumn == column)
@@ -1211,14 +1328,9 @@ namespace HDTplugins.Views
         private UIElement BuildHeroRow(HeroStatsRow row)
         {
             var container = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
-            var summaryBorder = new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(241, 238, 233)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(210, 205, 197)),
-                BorderThickness = new Thickness(1),
-                Padding = new Thickness(14, 12, 14, 12),
-                Cursor = Cursors.Hand
-            };
+            var summaryBorder = CreateCardBorder(SurfaceBrush, new Thickness(14, 12, 14, 12));
+            summaryBorder.BorderBrush = BorderStrongBrush;
+            summaryBorder.Cursor = Cursors.Hand;
 
             var summaryGrid = new Grid();
             summaryGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.4, GridUnitType.Star) });
@@ -1265,12 +1377,7 @@ namespace HDTplugins.Views
 
         private UIElement BuildHeroDetail(HeroStatsRow row)
         {
-            var border = new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
-                Padding = new Thickness(16),
-                Margin = new Thickness(0, 2, 0, 0)
-            };
+            var border = CreateCardBorder(SurfaceAltBrush, new Thickness(16), new Thickness(0, 2, 0, 0));
 
             var root = new StackPanel();
             border.Child = root;
@@ -1390,12 +1497,7 @@ namespace HDTplugins.Views
 
         private UIElement BuildMatchStatsPageBar(Thickness margin)
         {
-            var border = new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
-                Padding = new Thickness(10),
-                Margin = margin
-            };
+            var border = CreateCardBorder(SurfaceAltBrush, new Thickness(10), margin);
 
             var panel = new StackPanel { Orientation = Orientation.Horizontal };
             border.Child = panel;
@@ -1414,12 +1516,9 @@ namespace HDTplugins.Views
                 Content = Loc.S(resourceKey),
                 Padding = new Thickness(14, 7, 14, 7),
                 Margin = new Thickness(0, 0, 10, 0),
-                Background = isActive ? new SolidColorBrush(Color.FromRgb(126, 163, 209)) : Brushes.Transparent,
-                Foreground = Brushes.White,
-                BorderBrush = Brushes.Transparent,
-                Cursor = Cursors.Hand,
                 FontWeight = isActive ? FontWeights.SemiBold : FontWeights.Normal
             };
+            ApplyChipButtonChrome(button, isActive);
             button.Click += delegate
             {
                 if (_currentMatchStatsPage == page)
@@ -1441,7 +1540,7 @@ namespace HDTplugins.Views
                 root.Children.Add(new TextBlock
                 {
                     Text = Loc.S("Common_NoData"),
-                    Foreground = new SolidColorBrush(Color.FromRgb(126, 118, 108)),
+                    Foreground = MutedTextBrush,
                     FontSize = 15,
                     Margin = new Thickness(0, 10, 0, 0)
                 });
@@ -1464,7 +1563,7 @@ namespace HDTplugins.Views
                 root.Children.Add(new TextBlock
                 {
                     Text = Loc.S("Common_NoData"),
-                    Foreground = new SolidColorBrush(Color.FromRgb(126, 118, 108)),
+                    Foreground = MutedTextBrush,
                     FontSize = 15,
                     Margin = new Thickness(0, 10, 0, 0)
                 });
@@ -1480,12 +1579,7 @@ namespace HDTplugins.Views
 
         private UIElement BuildTrinketFilterBar()
         {
-            var border = new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
-                Padding = new Thickness(10),
-                Margin = new Thickness(0, 0, 0, 18)
-            };
+            var border = CreateCardBorder(SurfaceAltBrush, new Thickness(10), new Thickness(0, 0, 0, 18));
 
             var panel = new StackPanel { Orientation = Orientation.Horizontal };
             border.Child = panel;
@@ -1503,12 +1597,9 @@ namespace HDTplugins.Views
                 Content = Loc.S(resourceKey),
                 Padding = new Thickness(14, 7, 14, 7),
                 Margin = new Thickness(0, 0, 10, 0),
-                Background = isActive ? new SolidColorBrush(Color.FromRgb(126, 163, 209)) : Brushes.Transparent,
-                Foreground = Brushes.White,
-                BorderBrush = Brushes.Transparent,
-                Cursor = Cursors.Hand,
                 FontWeight = isActive ? FontWeights.SemiBold : FontWeights.Normal
             };
+            ApplyChipButtonChrome(button, isActive);
             button.Click += delegate
             {
                 if (_currentTrinketFilter == filter)
@@ -1522,12 +1613,7 @@ namespace HDTplugins.Views
 
         private UIElement BuildTrinketHeaderRow()
         {
-            var border = new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
-                Padding = new Thickness(14, 10, 14, 10),
-                Margin = new Thickness(0, 0, 0, 8)
-            };
+            var border = CreateCardBorder(SurfaceAltBrush, new Thickness(14, 10, 14, 10), new Thickness(0, 0, 0, 8));
 
             var grid = CreateTrinketGrid();
             border.Child = grid;
@@ -1541,12 +1627,7 @@ namespace HDTplugins.Views
 
         private UIElement BuildTrinketRow(TrinketStatsRow row)
         {
-            var border = new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
-                Padding = new Thickness(14, 12, 14, 12),
-                Margin = new Thickness(0, 0, 0, 6)
-            };
+            var border = CreateCardBorder(SurfaceBrush, new Thickness(14, 12, 14, 12), new Thickness(0, 0, 0, 6));
 
             var grid = CreateTrinketGrid();
             border.Child = grid;
@@ -1579,7 +1660,7 @@ namespace HDTplugins.Views
                 root.Children.Add(new TextBlock
                 {
                     Text = Loc.S("Common_NoData"),
-                    Foreground = new SolidColorBrush(Color.FromRgb(126, 118, 108)),
+                    Foreground = MutedTextBrush,
                     FontSize = 15,
                     Margin = new Thickness(0, 10, 0, 0)
                 });
@@ -1595,12 +1676,7 @@ namespace HDTplugins.Views
 
         private UIElement BuildTimewarpFilterBar()
         {
-            var border = new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
-                Padding = new Thickness(10),
-                Margin = new Thickness(0, 0, 0, 18)
-            };
+            var border = CreateCardBorder(SurfaceAltBrush, new Thickness(10), new Thickness(0, 0, 0, 18));
 
             var panel = new StackPanel { Orientation = Orientation.Horizontal };
             border.Child = panel;
@@ -1618,12 +1694,9 @@ namespace HDTplugins.Views
                 Content = Loc.S(resourceKey),
                 Padding = new Thickness(14, 7, 14, 7),
                 Margin = new Thickness(0, 0, 10, 0),
-                Background = isActive ? new SolidColorBrush(Color.FromRgb(126, 163, 209)) : Brushes.Transparent,
-                Foreground = Brushes.White,
-                BorderBrush = Brushes.Transparent,
-                Cursor = Cursors.Hand,
                 FontWeight = isActive ? FontWeights.SemiBold : FontWeights.Normal
             };
+            ApplyChipButtonChrome(button, isActive);
             button.Click += delegate
             {
                 if (_currentTimewarpFilter == filter)
@@ -1637,12 +1710,7 @@ namespace HDTplugins.Views
 
         private UIElement BuildTimewarpHeaderRow()
         {
-            var border = new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
-                Padding = new Thickness(14, 10, 14, 10),
-                Margin = new Thickness(0, 0, 0, 8)
-            };
+            var border = CreateCardBorder(SurfaceAltBrush, new Thickness(14, 10, 14, 10), new Thickness(0, 0, 0, 8));
 
             var grid = CreateTimewarpGrid();
             border.Child = grid;
@@ -1656,12 +1724,7 @@ namespace HDTplugins.Views
 
         private UIElement BuildTimewarpRow(TimewarpStatsRow row)
         {
-            var border = new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
-                Padding = new Thickness(14, 12, 14, 12),
-                Margin = new Thickness(0, 0, 0, 6)
-            };
+            var border = CreateCardBorder(SurfaceBrush, new Thickness(14, 12, 14, 12), new Thickness(0, 0, 0, 6));
 
             var grid = CreateTimewarpGrid();
             border.Child = grid;
@@ -1689,7 +1752,7 @@ namespace HDTplugins.Views
             return new TextBlock
             {
                 Text = Loc.S("QuestStats_Empty"),
-                Foreground = new SolidColorBrush(Color.FromRgb(126, 118, 108)),
+                Foreground = MutedTextBrush,
                 FontSize = 15,
                 Margin = new Thickness(0, 10, 0, 0),
                 TextWrapping = TextWrapping.Wrap
@@ -1698,12 +1761,7 @@ namespace HDTplugins.Views
 
         private UIElement BuildTavernTempoSummaryCard(TavernTempoSummary summary)
         {
-            var border = new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
-                Padding = new Thickness(16),
-                Margin = new Thickness(0, 0, 0, 18)
-            };
+            var border = CreateCardBorder(SurfaceAltBrush, new Thickness(16), new Thickness(0, 0, 0, 18));
 
             var stack = new StackPanel();
             border.Child = stack;
@@ -1739,7 +1797,7 @@ namespace HDTplugins.Views
                 Text = Loc.F("TavernTempo_TierHeaderFormat", section.TavernTier),
                 FontSize = 18,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = new SolidColorBrush(Color.FromRgb(95, 88, 79)),
+                Foreground = PrimaryTextBrush,
                 Margin = new Thickness(0, 0, 0, 10)
             });
             container.Children.Add(BuildTavernTempoHeaderRow());
@@ -1754,7 +1812,7 @@ namespace HDTplugins.Views
         {
             var border = new Border
             {
-                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
+                Background = SurfaceAltBrush,
                 Padding = new Thickness(14, 10, 14, 10),
                 Margin = new Thickness(0, 0, 0, 8)
             };
@@ -1773,7 +1831,7 @@ namespace HDTplugins.Views
         {
             var border = new Border
             {
-                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
+                Background = SurfaceAltBrush,
                 Padding = new Thickness(14, 12, 14, 12),
                 Margin = new Thickness(0, 0, 0, 6)
             };
@@ -1840,7 +1898,7 @@ namespace HDTplugins.Views
                 Text = _sectionTitle.Text,
                 FontSize = 26,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = new SolidColorBrush(Color.FromRgb(95, 88, 79)),
+                Foreground = PrimaryTextBrush,
                 TextAlignment = TextAlignment.Center,
                 Margin = new Thickness(0, 0, 0, 10)
             });
@@ -1848,7 +1906,7 @@ namespace HDTplugins.Views
             {
                 Text = Loc.S("Common_PlaceholderDeveloping"),
                 FontSize = 15,
-                Foreground = new SolidColorBrush(Color.FromRgb(136, 127, 117)),
+                Foreground = MutedTextBrush,
                 TextAlignment = TextAlignment.Center
             });
             return grid;
@@ -1862,7 +1920,7 @@ namespace HDTplugins.Views
                 _historyList.Children.Add(new TextBlock
                 {
                     Text = Loc.S("HistoryMatches_Empty"),
-                    Foreground = new SolidColorBrush(Color.FromRgb(126, 118, 108)),
+                    Foreground = MutedTextBrush,
                     FontSize = 15,
                     Margin = new Thickness(0, 18, 0, 0)
                 });
@@ -1879,13 +1937,8 @@ namespace HDTplugins.Views
 
         private Border BuildHistoryCard(BgMatchRow row)
         {
-            var border = new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
-                Margin = new Thickness(0, 0, 0, 18),
-                Padding = new Thickness(16, 12, 16, 12),
-                Cursor = Cursors.Hand
-            };
+            var border = CreateCardBorder(SurfaceBrush, new Thickness(16, 12, 16, 12), new Thickness(0, 0, 0, 18));
+            border.Cursor = Cursors.Hand;
 
             var stack = new StackPanel();
             border.Child = stack;
@@ -1957,15 +2010,16 @@ namespace HDTplugins.Views
             foreach (var pair in _sectionButtons)
             {
                 var active = pair.Key == _currentSection;
-                pair.Value.Foreground = active ? Brushes.White : new SolidColorBrush(Color.FromRgb(246, 244, 240));
+                pair.Value.Foreground = active ? PrimaryTextBrush : SecondaryTextBrush;
                 pair.Value.FontSize = active ? 21 : 18;
+                pair.Value.FontWeight = active ? FontWeights.Bold : FontWeights.SemiBold;
             }
         }
 
         private void RefreshHistoryToolbar()
         {
             foreach (var pair in _rangeButtons)
-                pair.Value.Background = pair.Key == _currentRange ? new SolidColorBrush(Color.FromRgb(196, 189, 177)) : new SolidColorBrush(Color.FromRgb(208, 202, 193));
+                ApplyChipButtonChrome(pair.Value, pair.Key == _currentRange);
 
             _dateNavigator.Visibility = _currentRange == HistoryRange.Season ? Visibility.Collapsed : Visibility.Visible;
             if (_currentRange == HistoryRange.Day)
@@ -1997,14 +2051,14 @@ namespace HDTplugins.Views
             stack.Children.Add(new TextBlock
             {
                 Text = Loc.S("VersionInfo_Title"),
-                Foreground = new SolidColorBrush(Color.FromRgb(247, 245, 241)),
+                Foreground = SecondaryTextBrush,
                 FontSize = 15,
                 FontWeight = FontWeights.SemiBold
             });
             stack.Children.Add(new TextBlock
             {
                 Text = archive != null ? _store.GetArchiveDisplayName(archive) : Loc.S("VersionInfo_NoMoreData"),
-                Foreground = Brushes.White,
+                Foreground = PrimaryTextBrush,
                 FontSize = 16,
                 Margin = new Thickness(0, 8, 0, 0),
                 TextWrapping = TextWrapping.Wrap,
@@ -2021,14 +2075,14 @@ namespace HDTplugins.Views
             stack.Children.Add(new TextBlock
             {
                 Text = "账号",
-                Foreground = new SolidColorBrush(Color.FromRgb(247, 245, 241)),
+                Foreground = SecondaryTextBrush,
                 FontSize = 15,
                 FontWeight = FontWeights.SemiBold
             });
             stack.Children.Add(new TextBlock
             {
                 Text = account.BattleTagName,
-                Foreground = Brushes.White,
+                Foreground = PrimaryTextBrush,
                 FontSize = 18,
                 FontWeight = FontWeights.SemiBold,
                 Margin = new Thickness(0, 3, 0, 0),
@@ -2039,7 +2093,7 @@ namespace HDTplugins.Views
                 stack.Children.Add(new TextBlock
                 {
                     Text = account.BattleTagCode,
-                    Foreground = Brushes.White,
+                    Foreground = SecondaryTextBrush,
                     FontSize = 14,
                     FontWeight = FontWeights.SemiBold,
                     Margin = new Thickness(0, 1, 0, 0),
@@ -2049,7 +2103,7 @@ namespace HDTplugins.Views
             stack.Children.Add(new TextBlock
             {
                 Text = account.Subtitle,
-                Foreground = new SolidColorBrush(Color.FromRgb(246, 244, 240)),
+                Foreground = MutedTextBrush,
                 FontSize = 12,
                 Margin = new Thickness(0, 4, 0, 0),
                 TextWrapping = TextWrapping.Wrap
@@ -2220,9 +2274,10 @@ namespace HDTplugins.Views
                 Content = Loc.S("Common_Back"),
                 Width = 92,
                 Height = 42,
-                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
-                Foreground = Brushes.White,
-                BorderBrush = Brushes.Transparent,
+                Background = SurfaceAltBrush,
+                Foreground = PrimaryTextBrush,
+                BorderBrush = BorderSubtleBrush,
+                BorderThickness = DefaultBorderThickness,
                 FontSize = 18,
                 FontWeight = FontWeights.SemiBold,
                 Cursor = Cursors.Hand
@@ -2247,30 +2302,22 @@ namespace HDTplugins.Views
 
         private Border CreateHeaderBadge(string text, Thickness? margin = null)
         {
-            return new Border
+            var border = CreateCardBorder(SurfaceAltBrush, new Thickness(14, 10, 14, 10), margin ?? new Thickness(0));
+            border.Child = new TextBlock
             {
-                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
-                Padding = new Thickness(14, 10, 14, 10),
-                Margin = margin ?? new Thickness(0),
-                Child = new TextBlock
-                {
-                    Text = text,
-                    Foreground = LightForegroundBrush,
-                    FontSize = 15,
-                    FontWeight = FontWeights.SemiBold
-                }
+                Text = text,
+                Foreground = LightForegroundBrush,
+                FontSize = 15,
+                FontWeight = FontWeights.SemiBold
             };
+            return border;
         }
 
         private Border CreateHeaderBadge(UIElement content, Thickness? margin = null)
         {
-            return new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
-                Padding = new Thickness(14, 10, 14, 10),
-                Margin = margin ?? new Thickness(0),
-                Child = content
-            };
+            var border = CreateCardBorder(SurfaceAltBrush, new Thickness(14, 10, 14, 10), margin ?? new Thickness(0));
+            border.Child = content;
+            return border;
         }
 
         private UIElement BuildHeroSection(BgSnapshot snapshot)
@@ -2332,7 +2379,7 @@ namespace HDTplugins.Views
                 Text = Loc.S("MatchDetail_TrinketSection"),
                 FontSize = 18,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = Brushes.White,
+                Foreground = PrimaryTextBrush,
                 Margin = new Thickness(0, 0, 0, 12)
             });
             stack.Children.Add(BuildDetailInfoRow(Loc.S("MatchDetail_LesserTrinketLabel"), ResolveTrinketName(snapshot.LesserTrinketCardId)));
@@ -2416,13 +2463,8 @@ namespace HDTplugins.Views
 
         private Border BuildMinionCard(BgBoardMinionSnapshot minion)
         {
-            var border = new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(126, 163, 209)),
-                Margin = new Thickness(8, 0, 8, 0),
-                Padding = new Thickness(10),
-                MinHeight = 116
-            };
+            var border = CreateCardBorder(SurfaceAltBrush, new Thickness(10), new Thickness(8, 0, 8, 0));
+            border.MinHeight = 116;
             border.ToolTip = BuildMinionToolTip(minion);
             var stack = new StackPanel();
             border.Child = stack;
@@ -2494,14 +2536,11 @@ namespace HDTplugins.Views
                 Width = 34,
                 Height = 34,
                 Margin = new Thickness(0, 0, 8, 0),
-                Background = new SolidColorBrush(Color.FromRgb(126, 163, 209)),
-                Foreground = Brushes.White,
-                BorderBrush = Brushes.Transparent,
-                Cursor = Cursors.Hand,
                 FontSize = 18,
                 FontWeight = FontWeights.Bold,
                 IsEnabled = combinedTags.Count < 5
             };
+            ApplyChipButtonChrome(addButton, true);
             addButton.Click += delegate
             {
                 var menu = BuildAddTagMenu(snapshot, combinedTags);
@@ -2547,12 +2586,9 @@ namespace HDTplugins.Views
 
         private Border BuildEditableTag(string tag, bool removable, Action onRemove)
         {
-            var border = new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(126, 163, 209)),
-                Margin = new Thickness(0, 0, 8, 0),
-                Padding = new Thickness(10, 6, 10, 6)
-            };
+            var border = CreateCardBorder(AccentBrush, new Thickness(10, 6, 10, 6), new Thickness(0, 0, 8, 0));
+            border.BorderBrush = AccentHoverBrush;
+            border.CornerRadius = ChipCornerRadius;
             var grid = new Grid();
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             if (removable)
@@ -2578,7 +2614,7 @@ namespace HDTplugins.Views
                     Margin = new Thickness(6, -4, 0, 0),
                     Background = Brushes.Transparent,
                     BorderBrush = Brushes.Transparent,
-                    Foreground = Brushes.White,
+                    Foreground = PrimaryTextBrush,
                     FontSize = 14,
                     FontWeight = FontWeights.Bold,
                     Visibility = Visibility.Collapsed,
@@ -2608,19 +2644,17 @@ namespace HDTplugins.Views
 
         private Border CreateTagChip(string text)
         {
-            return new Border
+            var border = CreateCardBorder(AccentBrush, new Thickness(8, 4, 8, 4), new Thickness(6, 0, 0, 0));
+            border.BorderBrush = AccentHoverBrush;
+            border.CornerRadius = ChipCornerRadius;
+            border.Child = new TextBlock
             {
-                Background = new SolidColorBrush(Color.FromRgb(126, 163, 209)),
-                Padding = new Thickness(8, 4, 8, 4),
-                Margin = new Thickness(6, 0, 0, 0),
-                Child = new TextBlock
-                {
-                    Text = text,
-                    Foreground = Brushes.White,
-                    FontSize = 12,
-                    FontWeight = FontWeights.SemiBold
-                }
+                Text = text,
+                Foreground = PrimaryTextBrush,
+                FontSize = 12,
+                FontWeight = FontWeights.SemiBold
             };
+            return border;
         }
 
         private void AddManualTag(BgSnapshot snapshot, string tag)
@@ -2682,12 +2716,8 @@ namespace HDTplugins.Views
         private UIElement BuildUpgradeChart(BgSnapshot snapshot)
         {
             var upgrades = (snapshot.TavernUpgradeTimeline ?? new List<BgTavernUpgradePoint>()).OrderBy(x => x.Turn).ToList();
-            var host = new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(126, 163, 209)),
-                Height = 180,
-                Padding = new Thickness(16)
-            };
+            var host = CreateCardBorder(SurfaceAltBrush, new Thickness(16));
+            host.Height = 180;
 
             if (upgrades.Count == 0)
             {
@@ -2752,12 +2782,7 @@ namespace HDTplugins.Views
         }
         private Border CreateSectionContainer()
         {
-            return new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(196, 189, 177)),
-                Margin = new Thickness(0, 0, 0, 20),
-                Padding = new Thickness(16)
-            };
+            return CreateCardBorder(SurfaceBrush, new Thickness(16), new Thickness(0, 0, 0, 20));
         }
 
         private void RestoreSelectedHistoryCard()
