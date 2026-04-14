@@ -147,7 +147,10 @@ namespace HDTplugins.Services
                         return finalBoard.Any(x => string.Equals(x.CardId, condition.CardId, StringComparison.OrdinalIgnoreCase) && x.IsGolden == expectedGolden);
                     return finalBoard.Any(x => x.IsGolden == expectedGolden);
                 case "herois":
-                    return string.Equals(snapshot.HeroCardId, condition.HeroCardId, StringComparison.OrdinalIgnoreCase);
+                    return string.Equals(
+                        HeroIdNormalizer.Normalize(snapshot.HeroCardId),
+                        HeroIdNormalizer.Normalize(condition.HeroCardId),
+                        StringComparison.OrdinalIgnoreCase);
                 case "heropoweris":
                     return (snapshot.InitialHeroPowerCardIds ?? new[] { snapshot.InitialHeroPowerCardId })
                                .Any(x => string.Equals(x, condition.HeroPowerCardId, StringComparison.OrdinalIgnoreCase))

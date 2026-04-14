@@ -606,7 +606,7 @@ namespace HDTplugins.Services
                     + $"\"matchId\":\"{JsonEscape(CurrentMatchId)}\"," 
                     + $"\"timestamp\":\"{JsonEscape(CurrentMatchTimestampUtc)}\"," 
                     + $"\"gameVersion\":\"{JsonEscape(GetArchiveRawVersion(_activeMatchArchive ?? CurrentArchive))}\"," 
-                    + $"\"heroCardId\":\"{JsonEscape(HeroIdNormalizer.Normalize(heroCardId))}\"," 
+                    + $"\"heroCardId\":\"{JsonEscape(heroCardId)}\"," 
                     + $"\"heroSkinCardId\":\"{JsonEscape(heroSkinCardId ?? string.Empty)}\"," 
                     + $"\"initialHeroPowerCardIds\":{SerializeStringArray(initialHeroPowerCardIds)}," 
                     + $"\"initialHeroPowerCardId\":\"{JsonEscape((initialHeroPowerCardIds ?? Array.Empty<string>()).FirstOrDefault() ?? string.Empty)}\""
@@ -636,13 +636,6 @@ namespace HDTplugins.Services
                     .Where(x => x != null && !string.IsNullOrWhiteSpace(x.CardId))
                     .OrderBy(x => x.Position)
                     .ToList();
-                var normalizedHeroCardId = HeroIdNormalizer.Normalize(heroCardId);
-                var normalizedOfferedHeroCardIds = (offeredHeroCardIds ?? Array.Empty<string>())
-                    .Where(x => !string.IsNullOrWhiteSpace(x))
-                    .Select(HeroIdNormalizer.Normalize)
-                    .Where(x => !string.IsNullOrWhiteSpace(x))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToArray();
 
                 var snapshot = new BgSnapshot
                 {
@@ -656,8 +649,8 @@ namespace HDTplugins.Services
                     ServerInfo = (_activeMatchAccount ?? CurrentAccount)?.ServerInfo ?? string.Empty,
                     RegionCode = (_activeMatchAccount ?? CurrentAccount)?.RegionCode ?? string.Empty,
                     RegionName = (_activeMatchAccount ?? CurrentAccount)?.RegionName ?? string.Empty,
-                    HeroCardId = normalizedHeroCardId,
-                    HeroName = GetCardName(normalizedHeroCardId),
+                    HeroCardId = heroCardId,
+                    HeroName = GetCardName(HeroIdNormalizer.Normalize(heroCardId)),
                     HeroSkinCardId = heroSkinCardId ?? string.Empty,
                     InitialHeroPowerCardIds = (initialHeroPowerCardIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Take(2).ToArray(),
                     InitialHeroPowerCardId = (initialHeroPowerCardIds ?? Array.Empty<string>()).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? string.Empty,
@@ -667,7 +660,10 @@ namespace HDTplugins.Services
                     RatingBefore = ratingBefore,
                     RatingAfter = ratingAfter,
                     RatingDelta = (ratingBefore > 0 && ratingAfter > 0) ? (ratingAfter - ratingBefore) : 0,
-                    OfferedHeroCardIds = normalizedOfferedHeroCardIds,
+                    OfferedHeroCardIds = (offeredHeroCardIds ?? Array.Empty<string>())
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToArray(),
                     AvailableRaces = availableRaces ?? Array.Empty<string>(),
                     LesserTrinketOptionCardIds = NormalizeCardIdArray(lesserTrinketOptionCardIds),
                     LesserTrinketCardId = NormalizeText(lesserTrinketCardId) ?? string.Empty,
@@ -700,7 +696,8 @@ namespace HDTplugins.Services
                         .ToList(),
                     ManualTags = new List<string>()
                 };
-                snapshot.AutoTags = _lineupTagService.Evaluate(snapshot, GetSnapshotVersionDisplayName(snapshot)).ToList();
+                var businessSnapshot = CreateBusinessSnapshot(snapshot);
+                snapshot.AutoTags = _lineupTagService.Evaluate(businessSnapshot, GetSnapshotVersionDisplayName(businessSnapshot)).ToList();
 
                 File.AppendAllText(finalFilePath, _serializer.Serialize(snapshot) + Environment.NewLine, Encoding.UTF8);
             }
@@ -989,6 +986,9 @@ namespace HDTplugins.Services
 
         private BgSnapshot NormalizeSnapshot(BgSnapshot snapshot)
         {
+            if (snapshot == null)
+                return null;
+
             var normalizedAccount = NormalizeAccountRecord(new AccountRecord
             {
                 Key = snapshot.AccountKey,
@@ -1006,7 +1006,13 @@ namespace HDTplugins.Services
             snapshot.ServerInfo = normalizedAccount.ServerInfo;
             snapshot.RegionCode = normalizedAccount.RegionCode;
             snapshot.RegionName = normalizedAccount.RegionName;
+            snapshot.HeroSkinCardId = string.IsNullOrWhiteSpace(snapshot.HeroSkinCardId)
+                ? NormalizeText(snapshot.HeroCardId) ?? string.Empty
+                : snapshot.HeroSkinCardId.Trim();
             snapshot.HeroCardId = HeroIdNormalizer.Normalize(snapshot.HeroCardId);
+            snapshot.HeroName = string.IsNullOrWhiteSpace(snapshot.HeroCardId)
+                ? NormalizeDisplay(snapshot.HeroName, string.Empty)
+                : GetCardName(snapshot.HeroCardId);
             snapshot.InitialHeroPowerCardIds = NormalizeHeroPowerCardIds(snapshot.InitialHeroPowerCardIds, snapshot.InitialHeroPowerCardId);
             snapshot.InitialHeroPowerCardId = snapshot.InitialHeroPowerCardIds.FirstOrDefault() ?? string.Empty;
             snapshot.HeroPowerCardIds = NormalizeHeroPowerCardIds(snapshot.HeroPowerCardIds, snapshot.HeroPowerCardId);
@@ -1065,6 +1071,64 @@ namespace HDTplugins.Services
             }
 
             return snapshot;
+        }
+
+        private BgSnapshot CreateBusinessSnapshot(BgSnapshot snapshot)
+        {
+            if (snapshot == null)
+                return null;
+
+            return NormalizeSnapshot(new BgSnapshot
+            {
+                MatchId = snapshot.MatchId,
+                Timestamp = snapshot.Timestamp,
+                GameVersion = snapshot.GameVersion,
+                AccountKey = snapshot.AccountKey,
+                AccountHi = snapshot.AccountHi,
+                AccountLo = snapshot.AccountLo,
+                BattleTag = snapshot.BattleTag,
+                ServerInfo = snapshot.ServerInfo,
+                RegionCode = snapshot.RegionCode,
+                RegionName = snapshot.RegionName,
+                HeroCardId = snapshot.HeroCardId,
+                HeroName = snapshot.HeroName,
+                HeroSkinCardId = snapshot.HeroSkinCardId,
+                InitialHeroPowerCardIds = (snapshot.InitialHeroPowerCardIds ?? Array.Empty<string>()).ToArray(),
+                InitialHeroPowerCardId = snapshot.InitialHeroPowerCardId,
+                HeroPowerCardIds = (snapshot.HeroPowerCardIds ?? Array.Empty<string>()).ToArray(),
+                HeroPowerCardId = snapshot.HeroPowerCardId,
+                RatingBefore = snapshot.RatingBefore,
+                RatingAfter = snapshot.RatingAfter,
+                RatingDelta = snapshot.RatingDelta,
+                Placement = snapshot.Placement,
+                OfferedHeroCardIds = (snapshot.OfferedHeroCardIds ?? Array.Empty<string>()).ToArray(),
+                AvailableRaces = (snapshot.AvailableRaces ?? Array.Empty<string>()).ToArray(),
+                LesserTrinketOptionCardIds = (snapshot.LesserTrinketOptionCardIds ?? Array.Empty<string>()).ToArray(),
+                LesserTrinketCardId = snapshot.LesserTrinketCardId,
+                GreaterTrinketOptionCardIds = (snapshot.GreaterTrinketOptionCardIds ?? Array.Empty<string>()).ToArray(),
+                GreaterTrinketCardId = snapshot.GreaterTrinketCardId,
+                HeroPowerTrinketCardId = snapshot.HeroPowerTrinketCardId,
+                HeroPowerTrinketType = snapshot.HeroPowerTrinketType,
+                TimewarpEntries = (snapshot.TimewarpEntries ?? new List<BgTimewarpEntry>()).Select(entry => entry == null
+                    ? null
+                    : new BgTimewarpEntry
+                    {
+                        Type = entry.Type,
+                        IsExtra = entry.IsExtra,
+                        OptionCardIds = (entry.OptionCardIds ?? Array.Empty<string>()).ToArray(),
+                        SelectedCardIds = (entry.SelectedCardIds ?? Array.Empty<string>()).ToArray()
+                    }).ToList(),
+                QuestCardId = snapshot.QuestCardId,
+                QuestRewardCardId = snapshot.QuestRewardCardId,
+                QuestCompleted = snapshot.QuestCompleted,
+                AnomalyCardId = snapshot.AnomalyCardId,
+                AnomalyName = snapshot.AnomalyName,
+                FinalBoardCardIds = (snapshot.FinalBoardCardIds ?? Array.Empty<string>()).ToArray(),
+                FinalBoard = (snapshot.FinalBoard ?? new List<BgBoardMinionSnapshot>()).ToList(),
+                TavernUpgradeTimeline = (snapshot.TavernUpgradeTimeline ?? new List<BgTavernUpgradePoint>()).ToList(),
+                AutoTags = (snapshot.AutoTags ?? new List<string>()).ToList(),
+                ManualTags = (snapshot.ManualTags ?? new List<string>()).ToList()
+            });
         }
 
         private BgSnapshot SafeDeserialize(string line)
