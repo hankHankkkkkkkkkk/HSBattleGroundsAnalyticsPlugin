@@ -27,7 +27,7 @@ namespace HDTplugins.Localization
             if (string.IsNullOrWhiteSpace(key))
                 return string.Empty;
 
-            var value = Strings.ResourceManager.GetString(key, Strings.Culture ?? CultureInfo.CurrentUICulture);
+            var value = Strings.GetString(key, Strings.Culture ?? CultureInfo.CurrentUICulture);
             return string.IsNullOrWhiteSpace(value) ? key : value;
         }
 

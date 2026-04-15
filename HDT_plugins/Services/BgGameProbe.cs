@@ -38,6 +38,14 @@ namespace HDTplugins.Services
             public string HeroPowerTrinketType { get; set; }
         }
 
+        private sealed class TimewarpChoiceSnapshot
+        {
+            public int ChoiceId { get; set; }
+            public string[] OfferedCardIds { get; set; } = Array.Empty<string>();
+            public string[] SelectedCardIds { get; set; } = Array.Empty<string>();
+            public string[] OfferedDebugEntries { get; set; } = Array.Empty<string>();
+        }
+
         private const int PollIntervalMs = 250;
         private const int OfferedLogThrottleMs = 800;
         private const string PlaceholderHeroCardId = "TB_BaconShop_HERO_PH";
@@ -60,6 +68,7 @@ namespace HDTplugins.Services
         private long _nextAccountResolveLogTs;
         private string[] _currentHeroPowerCardIds = Array.Empty<string>();
         private string _lastTimewarpOptionsSignature;
+        private Dictionary<int, int> _timewarpEntryIndexesByChoiceId = new Dictionary<int, int>();
         private string _lastGameV2TrinketDebugSignature;
         private string _lastLegacyTrinketDebugSignature;
         private bool _loggedMissingGameV2TrinketPath;
@@ -161,6 +170,7 @@ namespace HDTplugins.Services
             QuestRewardCardId = null;
             QuestCompleted = false;
             _lastTimewarpOptionsSignature = null;
+            _timewarpEntryIndexesByChoiceId = new Dictionary<int, int>();
             _lastGameV2TrinketDebugSignature = null;
             _lastLegacyTrinketDebugSignature = null;
             _loggedMissingGameV2TrinketPath = false;
@@ -987,7 +997,6 @@ namespace HDTplugins.Services
             {
                 TryCaptureQuestShell();
                 TryCaptureTimewarpEntry();
-                TryUpdateTimewarpSelections();
             }
             catch (Exception ex)
             {
@@ -1024,91 +1033,158 @@ namespace HDTplugins.Services
 
         private void TryCaptureTimewarpEntry()
         {
-            var options = GetPotentialTimewarpCardIds();
-            if (options.Length == 0)
+            var snapshot = GetCurrentChoiceTimewarpSnapshot();
+            if (snapshot == null || snapshot.OfferedCardIds.Length == 0)
                 return;
 
             var type = ResolveCurrentTimewarpType();
             if (string.IsNullOrWhiteSpace(type))
                 return;
 
+            var options = snapshot.OfferedCardIds;
+            var selected = snapshot.SelectedCardIds ?? Array.Empty<string>();
             var signature = type + "|" + string.Join("|", options.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
-            if (string.Equals(_lastTimewarpOptionsSignature, signature, StringComparison.OrdinalIgnoreCase))
+            if (snapshot.ChoiceId <= 0 && string.Equals(_lastTimewarpOptionsSignature, signature, StringComparison.OrdinalIgnoreCase))
                 return;
 
+            if (snapshot.ChoiceId > 0
+                && _timewarpEntryIndexesByChoiceId.TryGetValue(snapshot.ChoiceId, out var existingIndex)
+                && existingIndex >= 0
+                && existingIndex < TimewarpEntries.Count)
+            {
+                var existingEntry = TimewarpEntries[existingIndex];
+                if (existingEntry != null)
+                {
+                    existingEntry.Type = type;
+                    existingEntry.OptionCardIds = options;
+                    if (selected.Length > 0)
+                        existingEntry.SelectedCardIds = selected;
+                    _lastTimewarpOptionsSignature = signature;
+                    return;
+                }
+            }
+
             var existingSameOptions = TimewarpEntries.Any(entry =>
-                string.Equals(entry.Type, type, StringComparison.OrdinalIgnoreCase)
+                entry != null
+                && string.Equals(entry.Type, type, StringComparison.OrdinalIgnoreCase)
                 && SameCardIdSet(entry.OptionCardIds, options));
 
-            TimewarpEntries.Add(new BgTimewarpEntry
+            var entryToAdd = new BgTimewarpEntry
             {
                 Type = type,
                 IsExtra = existingSameOptions || TimewarpEntries.Any(entry => string.Equals(entry.Type, type, StringComparison.OrdinalIgnoreCase)),
                 OptionCardIds = options,
-                SelectedCardIds = Array.Empty<string>()
-            });
+                SelectedCardIds = selected
+            };
+            TimewarpEntries.Add(entryToAdd);
+            if (snapshot.ChoiceId > 0)
+                _timewarpEntryIndexesByChoiceId[snapshot.ChoiceId] = TimewarpEntries.Count - 1;
             _lastTimewarpOptionsSignature = signature;
-            HdtLog.Info($"[BGStats][Timewarp] captured options type={type} extra={TimewarpEntries.Last().IsExtra} options=[{string.Join(", ", options)}]");
+            HdtLog.Info($"[BGStats][Timewarp] captured options choice={snapshot.ChoiceId} type={type} extra={entryToAdd.IsExtra} options=[{string.Join(", ", options)}] selected=[{string.Join(", ", selected)}] detail=[{string.Join(" | ", snapshot.OfferedDebugEntries ?? Array.Empty<string>())}]");
         }
 
-        private void TryUpdateTimewarpSelections()
-        {
-            if (TimewarpEntries.Count == 0)
-                return;
-
-            var ownedCardIds = GetOwnedTimewarpCardIds();
-            if (ownedCardIds.Length == 0)
-                return;
-
-            foreach (var entry in TimewarpEntries)
-            {
-                if (entry == null || entry.OptionCardIds == null || entry.OptionCardIds.Length == 0)
-                    continue;
-
-                var selected = ownedCardIds
-                    .Where(cardId => entry.OptionCardIds.Contains(cardId, StringComparer.OrdinalIgnoreCase))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .Take(4)
-                    .ToArray();
-                if (selected.Length > 0)
-                    entry.SelectedCardIds = selected;
-            }
-        }
-
-        private string[] GetPotentialTimewarpCardIds()
+        private TimewarpChoiceSnapshot GetCurrentChoiceTimewarpSnapshot()
         {
             try
             {
-                return Core.Game?.Entities?.Values
-                    .Where(entity => entity != null && IsPotentialTimewarpEntity(entity))
-                    .Select(entity => entity.CardId)
+                var choice = GetPropertyValue(Core.Game, "CurrentChoice");
+                if (choice == null)
+                    return null;
+
+                var offeredEntityIds = GetEnumerableValues(GetPropertyValue(choice, "OfferedEntityIds"))
+                    .Select(ConvertToInt)
+                    .Where(id => id > 0)
+                    .ToArray();
+                if (offeredEntityIds.Length == 0)
+                    return null;
+
+                var offeredEntities = offeredEntityIds
+                    .Select(id => new
+                    {
+                        EntityId = id,
+                        Entity = TryGetEntityById(id)
+                    })
+                    .Where(x => x.Entity != null)
+                    .ToList();
+
+                var offeredCardIds = offeredEntities
+                    .Where(x => IsCurrentChoiceTimewarpEntity(x.Entity))
+                    .Select(x => (string)NormalizeCardId(x.Entity.CardId))
                     .Where(cardId => !string.IsNullOrWhiteSpace(cardId))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .Take(4)
-                    .ToArray() ?? Array.Empty<string>();
+                    .ToArray();
+                if (offeredCardIds.Length == 0)
+                    return null;
+
+                var selectedCardIds = GetEnumerableValues(GetPropertyValue(choice, "ChosenEntityIds"))
+                    .Select(ConvertToInt)
+                    .Where(id => id > 0)
+                    .Select(id => TryGetEntityById(id))
+                    .Where(entity => entity != null && IsCurrentChoiceTimewarpEntity(entity))
+                    .Select(entity => (string)NormalizeCardId(entity.CardId))
+                    .Where(cardId => !string.IsNullOrWhiteSpace(cardId))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+
+                return new TimewarpChoiceSnapshot
+                {
+                    ChoiceId = GetIntProperty(choice, "Id"),
+                    OfferedCardIds = offeredCardIds,
+                    SelectedCardIds = selectedCardIds,
+                    OfferedDebugEntries = offeredEntities
+                        .Select(x =>
+                        {
+                            var cardId = NormalizeCardId(x.Entity.CardId);
+                            var isCandidate = IsCurrentChoiceTimewarpEntity(x.Entity);
+                            var timewarped = GetNamedTagValue(x.Entity, "BACON_TIMEWARPED");
+                            return $"entity={x.EntityId},card={cardId ?? "null"},candidate={isCandidate},timewarped={timewarped},type={GetCardType(cardId)}";
+                        })
+                        .ToArray()
+                };
             }
-            catch
+            catch (Exception ex)
             {
-                return Array.Empty<string>();
+                HdtLog.Warn("[BGStats][Timewarp] failed to read CurrentChoice: " + ex.Message);
+                return null;
             }
         }
 
-        private string[] GetOwnedTimewarpCardIds()
+        private dynamic TryGetEntityById(int entityId)
         {
             try
             {
-                return Core.Game?.Entities?.Values
-                    .Where(entity => entity != null
-                        && !string.IsNullOrWhiteSpace(entity.CardId)
-                        && IsTimewarpCardId(entity.CardId)
-                        && IsControlledByPlayer(entity))
-                    .Select(entity => entity.CardId)
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToArray() ?? Array.Empty<string>();
+                if (entityId <= 0)
+                    return null;
+                if (Core.Game?.Entities == null)
+                    return null;
+                return Core.Game.Entities.TryGetValue(entityId, out var entity) ? entity : null;
             }
             catch
             {
-                return Array.Empty<string>();
+                return null;
+            }
+        }
+
+        private bool IsCurrentChoiceTimewarpEntity(dynamic entity)
+        {
+            try
+            {
+                var cardId = NormalizeCardId(entity?.CardId);
+                if (string.IsNullOrWhiteSpace(cardId))
+                    return false;
+
+                var cardType = GetCardType(cardId);
+                if (cardType == CardType.HERO
+                    || cardType == CardType.HERO_POWER
+                    || cardType == CardType.ENCHANTMENT
+                    || cardType == CardType.BATTLEGROUND_TRINKET)
+                    return false;
+
+                return GetNamedTagValue(entity, "BACON_TIMEWARPED") > 0 || IsTimewarpCardId(cardId);
+            }
+            catch
+            {
+                return false;
             }
         }
 
@@ -1173,13 +1249,16 @@ namespace HDTplugins.Services
             if (string.IsNullOrWhiteSpace(cardId))
                 return false;
 
-            if (cardId.StartsWith("BG34_", StringComparison.OrdinalIgnoreCase))
-                return true;
-
             try
             {
                 var card = Cards.All.TryGetValue(cardId, out var exact) ? exact : Cards.All.Values.FirstOrDefault(x => string.Equals(x.Id, cardId, StringComparison.OrdinalIgnoreCase));
                 if (card == null)
+                    return false;
+
+                if (card.Type == CardType.HERO
+                    || card.Type == CardType.HERO_POWER
+                    || card.Type == CardType.ENCHANTMENT
+                    || card.Type == CardType.BATTLEGROUND_TRINKET)
                     return false;
 
                 var name = card.Name ?? string.Empty;
