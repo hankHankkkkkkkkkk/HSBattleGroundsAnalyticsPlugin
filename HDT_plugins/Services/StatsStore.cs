@@ -23,6 +23,7 @@ namespace HDTplugins.Services
 
         private string _dataDir;
         private string _archivesDir;
+        private string _configDir;
         private string _currentArchiveDir;
         private string _finalFilePath;
         private string _pendingFilePath;
@@ -61,12 +62,13 @@ namespace HDTplugins.Services
 
                 var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
                 _dataDir = Path.Combine(local, "HDT_BGStats", "Data");
+                _configDir = Path.Combine(local, "HDT_BGStats", "Config");
                 _archivesDir = Path.Combine(_dataDir, "archives");
+                Directory.CreateDirectory(_configDir);
                 Directory.CreateDirectory(_archivesDir);
                 _tablesDir = Path.Combine(GetPluginDirectory(), "Tables");
                 Directory.CreateDirectory(_tablesDir);
-                MigrateIfNeeded(Path.Combine(_dataDir, "lineup_tags.json"), Path.Combine(_tablesDir, "lineup_tags.json"));
-                _lineupTagService.Initialize(_tablesDir);
+                _lineupTagService.Initialize(_configDir);
                 _versionDisplayService.Initialize(_tablesDir);
 
                 SetArchiveInternal(ResolveInitialArchive());
@@ -75,6 +77,7 @@ namespace HDTplugins.Services
                 MigrateIfNeeded(oldPending, _pendingFilePath);
 
                 HdtLog.Info($"[BGStats] æ•°æ®ç›®å½•(AppData Local)ï¼š{_dataDir}");
+                HdtLog.Info($"[BGStats] TAG é…ç½®ç›®å½•ï¼š{_configDir}");
                 HdtLog.Info($"[BGStats] å½“å‰ç‰ˆæœ¬å½’æ¡£ï¼š{CurrentArchive?.DisplayName}");
                 HdtLog.Info($"[BGStats] é…ç½®ç›®å½•ï¼š{_tablesDir}");
             }

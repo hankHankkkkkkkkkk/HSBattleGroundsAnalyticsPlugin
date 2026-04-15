@@ -22,7 +22,7 @@ namespace HDTplugins
         public string Name => Loc.S("Plugin_Name");
         public string Description => Loc.S("Plugin_Description");
         public string Author => "Hank";
-        public Version Version => new Version(1, 2, 0);
+        public Version Version => new Version(1, 2, 1);
         public string ButtonText => Loc.S("Plugin_ButtonText");
         public MenuItem MenuItem => _menuItem;
 

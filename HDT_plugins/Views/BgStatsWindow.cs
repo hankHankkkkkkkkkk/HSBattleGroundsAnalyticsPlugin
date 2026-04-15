@@ -198,8 +198,10 @@ namespace HDTplugins.Views
             style.Setters.Add(new Setter(Control.ForegroundProperty, PrimaryTextBrush));
             style.Setters.Add(new Setter(Control.BorderBrushProperty, BorderSubtleBrush));
             style.Setters.Add(new Setter(Control.BorderThicknessProperty, DefaultBorderThickness));
-            style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(10, 6, 10, 6)));
+            style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(14, 8, 14, 8)));
             style.Setters.Add(new Setter(Control.FontSizeProperty, 14.0));
+            style.Setters.Add(new Setter(Control.MinHeightProperty, 38.0));
+            style.Setters.Add(new Setter(Control.TemplateProperty, CreateComboBoxTemplate()));
             return style;
         }
 
@@ -208,8 +210,178 @@ namespace HDTplugins.Views
             var style = new Style(typeof(ComboBoxItem));
             style.Setters.Add(new Setter(Control.BackgroundProperty, SurfaceBrush));
             style.Setters.Add(new Setter(Control.ForegroundProperty, PrimaryTextBrush));
-            style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(10, 6, 10, 6)));
+            style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(14, 9, 14, 9)));
+            style.Setters.Add(new Setter(Control.TemplateProperty, CreateComboBoxItemTemplate()));
+            style.Triggers.Add(new Trigger
+            {
+                Property = UIElement.IsMouseOverProperty,
+                Value = true,
+                Setters =
+                {
+                    new Setter(Control.BackgroundProperty, SurfaceHoverBrush),
+                    new Setter(Control.ForegroundProperty, PrimaryTextBrush)
+                }
+            });
+            style.Triggers.Add(new Trigger
+            {
+                Property = ListBoxItem.IsSelectedProperty,
+                Value = true,
+                Setters =
+                {
+                    new Setter(Control.BackgroundProperty, AccentBrush),
+                    new Setter(Control.ForegroundProperty, PrimaryTextBrush)
+                }
+            });
             return style;
+        }
+
+        private static ControlTemplate CreateComboBoxTemplate()
+        {
+            var template = new ControlTemplate(typeof(ComboBox));
+
+            var root = new FrameworkElementFactory(typeof(Grid));
+
+            var toggleButton = new FrameworkElementFactory(typeof(ToggleButton));
+            toggleButton.Name = "ToggleButton";
+            toggleButton.SetValue(ToggleButton.FocusableProperty, false);
+            toggleButton.SetBinding(ToggleButton.IsCheckedProperty, new System.Windows.Data.Binding("IsDropDownOpen")
+            {
+                RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.TemplatedParent),
+                Mode = System.Windows.Data.BindingMode.TwoWay
+            });
+            toggleButton.SetValue(Control.BackgroundProperty, Brushes.Transparent);
+            toggleButton.SetValue(Control.BorderThicknessProperty, new Thickness(0));
+            toggleButton.SetValue(Control.CursorProperty, Cursors.Hand);
+            toggleButton.SetValue(Control.FocusVisualStyleProperty, null);
+
+            var toggleBorder = new FrameworkElementFactory(typeof(Border));
+            toggleBorder.Name = "OuterBorder";
+            toggleBorder.SetBinding(Border.BackgroundProperty, new System.Windows.Data.Binding("Background")
+            {
+                RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.TemplatedParent)
+            });
+            toggleBorder.SetBinding(Border.BorderBrushProperty, new System.Windows.Data.Binding("BorderBrush")
+            {
+                RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.TemplatedParent)
+            });
+            toggleBorder.SetBinding(Border.BorderThicknessProperty, new System.Windows.Data.Binding("BorderThickness")
+            {
+                RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.TemplatedParent)
+            });
+            toggleBorder.SetValue(Border.CornerRadiusProperty, SmallCornerRadius);
+            toggleBorder.SetValue(FrameworkElement.MinHeightProperty, 38.0);
+
+            var layoutPanel = new FrameworkElementFactory(typeof(DockPanel));
+
+            var contentPresenter = new FrameworkElementFactory(typeof(ContentPresenter));
+            contentPresenter.Name = "ContentSite";
+            contentPresenter.SetValue(FrameworkElement.MarginProperty, new Thickness(14, 0, 10, 0));
+            contentPresenter.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+            contentPresenter.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
+            contentPresenter.SetBinding(ContentPresenter.ContentProperty, new System.Windows.Data.Binding("SelectionBoxItem")
+            {
+                RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.TemplatedParent)
+            });
+            contentPresenter.SetBinding(ContentPresenter.ContentTemplateProperty, new System.Windows.Data.Binding("SelectionBoxItemTemplate")
+            {
+                RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.TemplatedParent)
+            });
+            contentPresenter.SetValue(TextElement.ForegroundProperty, PrimaryTextBrush);
+            layoutPanel.AppendChild(contentPresenter);
+
+            var arrow = new FrameworkElementFactory(typeof(Path));
+            arrow.Name = "Arrow";
+            arrow.SetValue(DockPanel.DockProperty, Dock.Right);
+            arrow.SetValue(Path.DataProperty, Geometry.Parse("M 0 0 L 4 4 L 8 0"));
+            arrow.SetValue(Shape.StrokeProperty, SecondaryTextBrush);
+            arrow.SetValue(Shape.StrokeThicknessProperty, 1.8);
+            arrow.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 0, 14, 0));
+            arrow.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+            arrow.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+            arrow.SetValue(UIElement.SnapsToDevicePixelsProperty, true);
+            layoutPanel.AppendChild(arrow);
+
+            toggleBorder.AppendChild(layoutPanel);
+            toggleButton.AppendChild(toggleBorder);
+            root.AppendChild(toggleButton);
+
+            var popup = new FrameworkElementFactory(typeof(Popup));
+            popup.Name = "Popup";
+            popup.SetValue(Popup.AllowsTransparencyProperty, true);
+            popup.SetValue(Popup.FocusableProperty, false);
+            popup.SetValue(Popup.PlacementProperty, PlacementMode.Bottom);
+            popup.SetBinding(Popup.IsOpenProperty, new System.Windows.Data.Binding("IsDropDownOpen")
+            {
+                RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.TemplatedParent),
+                Mode = System.Windows.Data.BindingMode.TwoWay
+            });
+
+            var popupBorder = new FrameworkElementFactory(typeof(Border));
+            popupBorder.SetValue(Border.BackgroundProperty, SurfaceBrush);
+            popupBorder.SetValue(Border.BorderBrushProperty, BorderStrongBrush);
+            popupBorder.SetValue(Border.BorderThicknessProperty, DefaultBorderThickness);
+            popupBorder.SetValue(Border.CornerRadiusProperty, SmallCornerRadius);
+            popupBorder.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 6, 0, 0));
+            popupBorder.SetValue(FrameworkElement.MinWidthProperty, 160.0);
+            popupBorder.SetBinding(FrameworkElement.WidthProperty, new System.Windows.Data.Binding("ActualWidth")
+            {
+                RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.TemplatedParent)
+            });
+
+            var scrollViewer = new FrameworkElementFactory(typeof(ScrollViewer));
+            scrollViewer.SetValue(FrameworkElement.MaxHeightProperty, 280.0);
+            scrollViewer.SetValue(ScrollViewer.CanContentScrollProperty, true);
+
+            var itemsPresenter = new FrameworkElementFactory(typeof(StackPanel));
+            itemsPresenter.SetValue(Panel.IsItemsHostProperty, true);
+            scrollViewer.AppendChild(itemsPresenter);
+            popupBorder.AppendChild(scrollViewer);
+            popup.AppendChild(popupBorder);
+            root.AppendChild(popup);
+
+            template.VisualTree = root;
+
+            var trigger = new Trigger { Property = ComboBox.IsDropDownOpenProperty, Value = true };
+            trigger.Setters.Add(new Setter(Border.BorderBrushProperty, AccentHoverBrush, "OuterBorder"));
+            trigger.Setters.Add(new Setter(UIElement.RenderTransformProperty, new RotateTransform(180), "Arrow"));
+            trigger.Setters.Add(new Setter(Shape.StrokeProperty, PrimaryTextBrush, "Arrow"));
+            template.Triggers.Add(trigger);
+
+            var hoverTrigger = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+            hoverTrigger.Setters.Add(new Setter(Border.BackgroundProperty, SurfaceHoverBrush, "OuterBorder"));
+            hoverTrigger.Setters.Add(new Setter(Border.BorderBrushProperty, BorderStrongBrush, "OuterBorder"));
+            template.Triggers.Add(hoverTrigger);
+
+            return template;
+        }
+
+        private static ControlTemplate CreateComboBoxItemTemplate()
+        {
+            var template = new ControlTemplate(typeof(ComboBoxItem));
+            var border = new FrameworkElementFactory(typeof(Border));
+            border.Name = "ItemBorder";
+            border.SetBinding(Border.BackgroundProperty, new System.Windows.Data.Binding("Background")
+            {
+                RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.TemplatedParent)
+            });
+            border.SetValue(Border.CornerRadiusProperty, new CornerRadius(6));
+            border.SetValue(FrameworkElement.MarginProperty, new Thickness(6, 2, 6, 2));
+
+            var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
+            presenter.SetBinding(ContentPresenter.ContentProperty, new System.Windows.Data.Binding("Content")
+            {
+                RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.TemplatedParent)
+            });
+            presenter.SetBinding(TextElement.ForegroundProperty, new System.Windows.Data.Binding("Foreground")
+            {
+                RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.TemplatedParent)
+            });
+            presenter.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+            presenter.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Left);
+            border.AppendChild(presenter);
+
+            template.VisualTree = border;
+            return template;
         }
 
         private static Style CreateCheckBoxStyle()
@@ -705,36 +877,37 @@ namespace HDTplugins.Views
             var currentLanguage = string.IsNullOrWhiteSpace(_settingsService.Settings.Language)
                 ? LocalizationService.CurrentCulture.Name
                 : LocalizationService.NormalizeCulture(_settingsService.Settings.Language).Name;
-            var panel = new StackPanel { MaxWidth = 520 };
-
-            var card = CreateCardBorder(SurfaceBrush, new Thickness(20));
-            panel.Children.Add(card);
-
-            var stack = new StackPanel();
-            card.Child = stack;
-
-            stack.Children.Add(new TextBlock
+            var scrollViewer = new ScrollViewer
             {
-                Text = Loc.S("Settings_Header"),
-                FontSize = 20,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = PrimaryTextBrush,
-                Margin = new Thickness(0, 0, 0, 18)
-            });
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+            };
 
-            stack.Children.Add(new TextBlock
+            var root = new Grid();
+            scrollViewer.Content = root;
+
+            var contentGrid = new Grid
             {
-                Text = Loc.S("Settings_LanguageLabel"),
-                Foreground = SecondaryTextBrush,
-                FontSize = 14,
-                FontWeight = FontWeights.SemiBold,
-                Margin = new Thickness(0, 0, 0, 8)
-            });
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            contentGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            contentGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
+            contentGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            root.Children.Add(contentGrid);
+
+            var leftColumn = new StackPanel();
+            var rightColumn = new StackPanel();
+            Grid.SetColumn(rightColumn, 2);
+            contentGrid.Children.Add(leftColumn);
+            contentGrid.Children.Add(rightColumn);
+
+            leftColumn.Children.Add(CreateSettingsLabel(Loc.S("Settings_LanguageLabel")));
 
             var languageComboBox = new ComboBox
             {
-                Margin = new Thickness(0, 0, 0, 12),
-                MinWidth = 220
+                Margin = new Thickness(0, 0, 0, 20),
+                Width = 300,
+                HorizontalAlignment = HorizontalAlignment.Stretch
             };
             var zhCnItem = new ComboBoxItem { Content = Loc.S("Settings_LanguageZhCn"), Tag = LocalizationService.ChineseCultureName };
             var enUsItem = new ComboBoxItem { Content = Loc.S("Settings_LanguageEnUs"), Tag = LocalizationService.DefaultCultureName };
@@ -743,21 +916,22 @@ namespace HDTplugins.Views
             languageComboBox.SelectedItem = string.Equals(currentLanguage, LocalizationService.ChineseCultureName, StringComparison.OrdinalIgnoreCase)
                 ? (object)zhCnItem
                 : enUsItem;
-            stack.Children.Add(languageComboBox);
-
-            stack.Children.Add(new TextBlock
+            languageComboBox.SelectionChanged += delegate
             {
-                Text = Loc.S("Settings_ScoreLineLabel"),
-                Foreground = SecondaryTextBrush,
-                FontSize = 14,
-                FontWeight = FontWeights.SemiBold,
-                Margin = new Thickness(0, 4, 0, 8)
-            });
+                if (!(languageComboBox.SelectedItem is ComboBoxItem selectedItem) || !(selectedItem.Tag is string selectedLanguage))
+                    return;
+
+                SaveSettings(language: selectedLanguage, applyLanguage: true);
+            };
+            leftColumn.Children.Add(languageComboBox);
+
+            rightColumn.Children.Add(CreateSettingsLabel(Loc.S("Settings_ScoreLineLabel")));
 
             var scoreLineComboBox = new ComboBox
             {
-                Margin = new Thickness(0, 0, 0, 12),
-                MinWidth = 220
+                Margin = new Thickness(0, 0, 0, 20),
+                Width = 300,
+                HorizontalAlignment = HorizontalAlignment.Stretch
             };
             var normalizedScoreLine = _settingsService.Settings.GetNormalizedScoreLine();
             var scoreLineTop4 = new ComboBoxItem { Content = Loc.S("Settings_ScoreLineTop4"), Tag = 4.5 };
@@ -771,21 +945,22 @@ namespace HDTplugins.Views
                 : Math.Abs(normalizedScoreLine - 3.5) < 0.01
                     ? scoreLineTop3
                     : scoreLineTop4;
-            stack.Children.Add(scoreLineComboBox);
-
-            stack.Children.Add(new TextBlock
+            scoreLineComboBox.SelectionChanged += delegate
             {
-                Text = Loc.S("Settings_HeroSortLabel"),
-                Foreground = SecondaryTextBrush,
-                FontSize = 14,
-                FontWeight = FontWeights.SemiBold,
-                Margin = new Thickness(0, 4, 0, 8)
-            });
+                if (!(scoreLineComboBox.SelectedItem is ComboBoxItem selectedItem) || !(selectedItem.Tag is double selectedScoreLine))
+                    return;
+
+                SaveSettings(scoreLine: selectedScoreLine, refreshCurrentView: true);
+            };
+            rightColumn.Children.Add(scoreLineComboBox);
+
+            leftColumn.Children.Add(CreateSettingsLabel(Loc.S("Settings_HeroSortLabel")));
 
             var heroSortComboBox = new ComboBox
             {
-                Margin = new Thickness(0, 0, 0, 12),
-                MinWidth = 220
+                Margin = new Thickness(0, 0, 0, 24),
+                Width = 300,
+                HorizontalAlignment = HorizontalAlignment.Stretch
             };
             var heroSortPicks = new ComboBoxItem { Content = Loc.S("HeroStats_HeaderPicks"), Tag = HeroSortColumn.Picks };
             var heroSortAveragePlacement = new ComboBoxItem { Content = Loc.S("HeroStats_HeaderAvgPlacement"), Tag = HeroSortColumn.AveragePlacement };
@@ -796,7 +971,14 @@ namespace HDTplugins.Views
             heroSortComboBox.Items.Add(heroSortContribution);
             heroSortComboBox.Items.Add(heroSortPickRate);
             heroSortComboBox.SelectedItem = GetHeroSortComboItem(_settingsService.Settings.HeroStatsDefaultSort, heroSortPicks, heroSortAveragePlacement, heroSortContribution, heroSortPickRate);
-            stack.Children.Add(heroSortComboBox);
+            heroSortComboBox.SelectionChanged += delegate
+            {
+                if (!(heroSortComboBox.SelectedItem is ComboBoxItem selectedItem) || !(selectedItem.Tag is HeroSortColumn selectedHeroSort))
+                    return;
+
+                SaveSettings(heroSortColumn: selectedHeroSort, refreshCurrentView: _currentSection == SidebarSection.Heroes);
+            };
+            leftColumn.Children.Add(heroSortComboBox);
 
             var autoOpenCheckBox = new CheckBox
             {
@@ -805,24 +987,26 @@ namespace HDTplugins.Views
                 Foreground = PrimaryTextBrush,
                 FontSize = 15,
                 FontWeight = FontWeights.SemiBold,
-                Margin = new Thickness(0, 0, 0, 8)
+                Margin = new Thickness(0, 6, 0, 8)
             };
-            stack.Children.Add(autoOpenCheckBox);
+            autoOpenCheckBox.Checked += delegate { SaveSettings(autoOpenOnStartup: true); };
+            autoOpenCheckBox.Unchecked += delegate { SaveSettings(autoOpenOnStartup: false); };
+            rightColumn.Children.Add(autoOpenCheckBox);
 
-            stack.Children.Add(new TextBlock
+            rightColumn.Children.Add(new TextBlock
             {
                 Text = Loc.S("Settings_AutoOpenHint"),
                 Foreground = MutedTextBrush,
                 FontSize = 12,
                 TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 0, 0, 14)
+                Margin = new Thickness(0, 0, 0, 24)
             });
 
             var manageTagsButton = new Button
             {
                 Content = Loc.S("Settings_ManageTags"),
-                Height = 34,
-                MinWidth = 140,
+                Height = 38,
+                MinWidth = 160,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 Background = SurfaceAltBrush,
                 Foreground = PrimaryTextBrush,
@@ -830,46 +1014,59 @@ namespace HDTplugins.Views
                 BorderThickness = DefaultBorderThickness,
                 FontSize = 14,
                 FontWeight = FontWeights.SemiBold,
-                Margin = new Thickness(0, 0, 0, 18)
+                Padding = new Thickness(18, 0, 18, 0)
             };
             manageTagsButton.Click += delegate
             {
                 _currentSettingsPage = SettingsPage.TagManagement;
                 RebuildContent();
             };
-            stack.Children.Add(manageTagsButton);
+            leftColumn.Children.Add(manageTagsButton);
 
-            var saveButton = new Button
+            return scrollViewer;
+        }
+
+        private TextBlock CreateSettingsLabel(string text)
+        {
+            return new TextBlock
             {
-                Content = Loc.S("Common_Save"),
-                Width = 96,
-                Height = 34,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                Background = AccentBrush,
-                Foreground = PrimaryTextBrush,
-                BorderBrush = AccentHoverBrush,
-                BorderThickness = DefaultBorderThickness,
+                Text = text,
+                Foreground = SecondaryTextBrush,
                 FontSize = 14,
-                FontWeight = FontWeights.SemiBold
+                FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(0, 0, 0, 8)
             };
-            saveButton.Click += delegate
-            {
-                var selectedLanguage = (languageComboBox.SelectedItem as ComboBoxItem)?.Tag as string;
-                var selectedScoreLine = (scoreLineComboBox.SelectedItem as ComboBoxItem)?.Tag;
-                var selectedHeroSort = (heroSortComboBox.SelectedItem as ComboBoxItem)?.Tag;
-                _settingsService.Settings.AutoOpenOnStartup = autoOpenCheckBox.IsChecked != false;
-                _settingsService.Settings.Language = LocalizationService.NormalizeCulture(selectedLanguage).Name;
-                _settingsService.Settings.ScoreLine = selectedScoreLine is double scoreLine ? scoreLine : 4.5;
-                _settingsService.Settings.HeroStatsDefaultSort = selectedHeroSort is HeroSortColumn heroSortColumn
-                    ? heroSortColumn.ToString()
-                    : HeroSortColumn.Picks.ToString();
-                _settingsService.Save();
-                LoadHeroSortPreference();
-                LocalizationService.SetLanguage(_settingsService.Settings.Language);
-            };
-            stack.Children.Add(saveButton);
+        }
 
-            return panel;
+        private void SaveSettings(string language = null, double? scoreLine = null, HeroSortColumn? heroSortColumn = null, bool? autoOpenOnStartup = null, bool applyLanguage = false, bool refreshCurrentView = false)
+        {
+            var normalizedLanguage = LocalizationService.NormalizeCulture(language ?? _settingsService.Settings.Language).Name;
+            _settingsService.Settings.Language = normalizedLanguage;
+            _settingsService.Settings.ScoreLine = scoreLine ?? _settingsService.Settings.GetNormalizedScoreLine();
+            _settingsService.Settings.HeroStatsDefaultSort = (heroSortColumn ?? ParseHeroSortOrDefault(_settingsService.Settings.HeroStatsDefaultSort)).ToString();
+
+            if (autoOpenOnStartup.HasValue)
+                _settingsService.Settings.AutoOpenOnStartup = autoOpenOnStartup.Value;
+
+            _settingsService.Save();
+            LoadHeroSortPreference();
+
+            if (applyLanguage)
+            {
+                LocalizationService.SetLanguage(_settingsService.Settings.Language);
+                return;
+            }
+
+            if (refreshCurrentView)
+                RebuildContent();
+        }
+
+        private HeroSortColumn ParseHeroSortOrDefault(string sortValue)
+        {
+            if (!Enum.TryParse(sortValue, true, out HeroSortColumn sortColumn))
+                return HeroSortColumn.Picks;
+
+            return sortColumn;
         }
 
         private UIElement BuildTagManagementView()
@@ -880,7 +1077,7 @@ namespace HDTplugins.Views
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
             };
 
-            var panel = new StackPanel { MaxWidth = 560 };
+            var panel = new StackPanel();
             scrollViewer.Content = panel;
 
             var backButton = new Button
@@ -904,13 +1101,7 @@ namespace HDTplugins.Views
             };
             panel.Children.Add(backButton);
 
-            var card = CreateCardBorder(SurfaceBrush, new Thickness(20));
-            panel.Children.Add(card);
-
-            var stack = new StackPanel();
-            card.Child = stack;
-
-            stack.Children.Add(new TextBlock
+            panel.Children.Add(new TextBlock
             {
                 Text = Loc.S("TagManager_Title"),
                 FontSize = 20,
@@ -919,7 +1110,7 @@ namespace HDTplugins.Views
                 Margin = new Thickness(0, 0, 0, 12)
             });
 
-            stack.Children.Add(new TextBlock
+            panel.Children.Add(new TextBlock
             {
                 Text = Loc.S("TagManager_Description"),
                 Foreground = MutedTextBrush,
@@ -928,20 +1119,20 @@ namespace HDTplugins.Views
                 Margin = new Thickness(0, 0, 0, 18)
             });
 
-            var addGrid = new Grid { Margin = new Thickness(0, 0, 0, 18) };
+            var addGrid = new Grid { Margin = new Thickness(0, 0, 0, 22) };
             addGrid.ColumnDefinitions.Add(new ColumnDefinition());
             addGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            stack.Children.Add(addGrid);
+            panel.Children.Add(addGrid);
 
             var tagInput = new TextBox
             {
-                MinWidth = 220,
-                Height = 34,
-                Padding = new Thickness(10, 6, 10, 6),
+                Height = 38,
+                Padding = new Thickness(12, 7, 12, 7),
                 Background = SurfaceAltBrush,
                 Foreground = PrimaryTextBrush,
                 BorderBrush = BorderSubtleBrush,
-                BorderThickness = DefaultBorderThickness
+                BorderThickness = DefaultBorderThickness,
+                HorizontalAlignment = HorizontalAlignment.Stretch
             };
             Grid.SetColumn(tagInput, 0);
             addGrid.Children.Add(tagInput);
@@ -949,8 +1140,8 @@ namespace HDTplugins.Views
             var addButton = new Button
             {
                 Content = Loc.S("TagManager_Add"),
-                Width = 88,
-                Height = 34,
+                Width = 96,
+                Height = 38,
                 Margin = new Thickness(12, 0, 0, 0),
                 Background = AccentBrush,
                 Foreground = PrimaryTextBrush,
@@ -975,7 +1166,7 @@ namespace HDTplugins.Views
             var tagDefinitions = _store.GetAvailableTagDefinitions();
             if (tagDefinitions.Count == 0)
             {
-                stack.Children.Add(new TextBlock
+                panel.Children.Add(new TextBlock
                 {
                     Text = Loc.S("TagManager_Empty"),
                     Foreground = MutedTextBrush,
@@ -988,7 +1179,7 @@ namespace HDTplugins.Views
             {
                 Margin = new Thickness(0, 0, 0, 4)
             };
-            stack.Children.Add(tagWrapPanel);
+            panel.Children.Add(tagWrapPanel);
 
             foreach (var tagDefinition in tagDefinitions)
             {
@@ -1004,8 +1195,11 @@ namespace HDTplugins.Views
             border.HorizontalAlignment = HorizontalAlignment.Left;
             border.MinWidth = 160;
 
+            var root = new Grid();
+            border.Child = root;
+
             var contentPanel = new StackPanel();
-            border.Child = contentPanel;
+            root.Children.Add(contentPanel);
 
             contentPanel.Children.Add(new TextBlock
             {
@@ -1027,17 +1221,20 @@ namespace HDTplugins.Views
             {
                 var deleteButton = new Button
                 {
-                    Content = Loc.S("TagManager_Delete"),
-                    Width = 88,
-                    Height = 32,
-                    Margin = new Thickness(12, 0, 0, 0),
+                    Content = "×",
+                    Width = 22,
+                    Height = 22,
+                    Padding = new Thickness(0),
                     Background = SurfaceBrush,
                     Foreground = PrimaryTextBrush,
                     BorderBrush = BorderSubtleBrush,
                     BorderThickness = DefaultBorderThickness,
                     FontSize = 13,
                     FontWeight = FontWeights.SemiBold,
-                    HorizontalAlignment = HorizontalAlignment.Left
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    VerticalAlignment = VerticalAlignment.Top,
+                    Visibility = Visibility.Collapsed,
+                    Cursor = Cursors.Hand
                 };
                 deleteButton.Click += delegate
                 {
@@ -1049,7 +1246,10 @@ namespace HDTplugins.Views
 
                     MessageBox.Show(this, Loc.S("TagManager_DeleteFailed"), Loc.S("TagManager_Title"), MessageBoxButton.OK, MessageBoxImage.Information);
                 };
-                contentPanel.Children.Add(deleteButton);
+                root.Children.Add(deleteButton);
+
+                border.MouseEnter += delegate { deleteButton.Visibility = Visibility.Visible; };
+                border.MouseLeave += delegate { deleteButton.Visibility = Visibility.Collapsed; };
             }
 
             return border;

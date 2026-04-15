@@ -20,11 +20,11 @@ namespace HDTplugins.Services
 
         public string ConfigPath => string.IsNullOrWhiteSpace(_configFilePath) ? "embedded:" + ResourceName : _configFilePath;
 
-        public void Initialize(string tablesDir)
+        public void Initialize(string configDir)
         {
-            _configFilePath = string.IsNullOrWhiteSpace(tablesDir)
+            _configFilePath = string.IsNullOrWhiteSpace(configDir)
                 ? null
-                : Path.Combine(tablesDir, "lineup_tags.json");
+                : Path.Combine(configDir, "lineup_tags.json");
             EnsureConfigFileExists();
             Reload();
             HdtLog.Info("[BGStats] TAG 配置来源: " + ConfigPath);
@@ -41,21 +41,29 @@ namespace HDTplugins.Services
         {
             Reload();
 
-            var tags = new Dictionary<string, LineupTagDefinition>(StringComparer.OrdinalIgnoreCase);
+            var customTags = new List<LineupTagDefinition>();
+            var builtInTags = new List<LineupTagDefinition>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
             foreach (var definition in _config.AvailableTags ?? new List<LineupTagDefinition>())
             {
                 if (definition == null || !IsManualTagVisible(definition.Name, versionDisplayName))
                     continue;
 
                 var normalizedName = NormalizeTagName(definition.Name);
-                if (string.IsNullOrWhiteSpace(normalizedName))
+                if (string.IsNullOrWhiteSpace(normalizedName) || !seen.Add(normalizedName))
                     continue;
 
-                tags[normalizedName] = new LineupTagDefinition
+                var tagDefinition = new LineupTagDefinition
                 {
                     Name = normalizedName,
                     IsEditable = definition.IsEditable
                 };
+
+                if (definition.IsEditable)
+                    customTags.Add(tagDefinition);
+                else
+                    builtInTags.Add(tagDefinition);
             }
 
             foreach (var rule in _config.Rules ?? new List<LineupTagRule>())
@@ -64,18 +72,22 @@ namespace HDTplugins.Services
                     continue;
 
                 var normalizedTag = NormalizeTagName(rule.Tag);
-                if (string.IsNullOrWhiteSpace(normalizedTag) || tags.ContainsKey(normalizedTag))
+                if (string.IsNullOrWhiteSpace(normalizedTag) || !seen.Add(normalizedTag))
                     continue;
 
-                tags[normalizedTag] = new LineupTagDefinition
+                builtInTags.Add(new LineupTagDefinition
                 {
                     Name = normalizedTag,
                     IsEditable = false
-                };
+                });
             }
 
-            return tags.Values
+            return customTags
+                .AsEnumerable()
+                .Reverse()
+                .Concat(builtInTags
                 .OrderBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase)
+                .ToList())
                 .ToList();
         }
 
@@ -269,7 +281,7 @@ namespace HDTplugins.Services
         {
             var result = new List<LineupTagDefinition>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var items = rawAvailableTags as ArrayList;
+            var items = rawAvailableTags as IEnumerable;
             if (items == null)
                 return result;
 
@@ -287,6 +299,13 @@ namespace HDTplugins.Services
                         name = dictionary["name"] as string;
                     if (dictionary.ContainsKey("isEditable"))
                         isEditable = ConvertToBool(dictionary["isEditable"]);
+                }
+                else if (item is IDictionary legacyDictionary)
+                {
+                    if (legacyDictionary.Contains("name"))
+                        name = legacyDictionary["name"] as string;
+                    if (legacyDictionary.Contains("isEditable"))
+                        isEditable = ConvertToBool(legacyDictionary["isEditable"]);
                 }
 
                 var normalizedName = NormalizeTagName(name);
