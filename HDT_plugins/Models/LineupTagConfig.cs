@@ -4,8 +4,14 @@ namespace HDTplugins.Models
 {
     public class LineupTagConfig
     {
-        public List<string> AvailableTags { get; set; } = new List<string>();
+        public List<LineupTagDefinition> AvailableTags { get; set; } = new List<LineupTagDefinition>();
         public List<LineupTagRule> Rules { get; set; } = new List<LineupTagRule>();
+    }
+
+    public class LineupTagDefinition
+    {
+        public string Name { get; set; }
+        public bool IsEditable { get; set; }
     }
 
     public class LineupTagRule

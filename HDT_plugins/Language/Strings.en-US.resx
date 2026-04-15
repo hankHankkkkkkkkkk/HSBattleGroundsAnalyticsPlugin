@@ -360,6 +360,36 @@
   <data name="Tags_NoAvailable" xml:space="preserve">
     <value>No available tags to add</value>
   </data>
+  <data name="Settings_ManageTags" xml:space="preserve">
+    <value>Manage tags</value>
+  </data>
+  <data name="TagManager_Title" xml:space="preserve">
+    <value>Manage Tags</value>
+  </data>
+  <data name="TagManager_Description" xml:space="preserve">
+    <value>Built-in tags are read-only. Custom tags take effect immediately and appear in the match detail tag picker.</value>
+  </data>
+  <data name="TagManager_Add" xml:space="preserve">
+    <value>Add</value>
+  </data>
+  <data name="TagManager_Delete" xml:space="preserve">
+    <value>Delete</value>
+  </data>
+  <data name="TagManager_Empty" xml:space="preserve">
+    <value>No tags available.</value>
+  </data>
+  <data name="TagManager_BuiltInTag" xml:space="preserve">
+    <value>Built-in tag</value>
+  </data>
+  <data name="TagManager_CustomTag" xml:space="preserve">
+    <value>Custom tag</value>
+  </data>
+  <data name="TagManager_AddFailed" xml:space="preserve">
+    <value>Unable to add this tag. Check whether the name is empty or already exists.</value>
+  </data>
+  <data name="TagManager_DeleteFailed" xml:space="preserve">
+    <value>Unable to delete this tag.</value>
+  </data>
   <data name="GameRace_BEAST" xml:space="preserve">
     <value>Beast</value>
   </data>
@@ -380,6 +410,9 @@
   </data>
   <data name="GameRace_NAGA" xml:space="preserve">
     <value>Naga</value>
+  </data>
+  <data name="GameRace_NEUTRAL" xml:space="preserve">
+    <value>Neutral</value>
   </data>
   <data name="GameRace_PIRATE" xml:space="preserve">
     <value>Pirate</value>

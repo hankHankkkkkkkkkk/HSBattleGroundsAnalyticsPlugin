@@ -96,6 +96,15 @@ namespace HDTplugins.Services
             if (string.IsNullOrWhiteSpace(raceValue))
                 return FirstNonEmpty(fallback, string.Empty);
 
+            if (string.Equals(raceValue, "NEUTRAL", StringComparison.OrdinalIgnoreCase))
+            {
+                var neutral = Loc.S("GameRace_NEUTRAL");
+                return FirstNonEmpty(
+                    !string.Equals(neutral, "GameRace_NEUTRAL", StringComparison.Ordinal) ? neutral : string.Empty,
+                    fallback,
+                    "Neutral");
+            }
+
             if (!Enum.TryParse(raceValue, true, out Race race))
                 return FirstNonEmpty(fallback, raceValue);
 

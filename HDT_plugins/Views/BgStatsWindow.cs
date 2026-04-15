@@ -61,6 +61,12 @@ namespace HDTplugins.Views
             Quests
         }
 
+        private enum SettingsPage
+        {
+            Main,
+            TagManagement
+        }
+
         private readonly StatsStore _store;
         private readonly PluginSettingsService _settingsService;
         private readonly Dictionary<SidebarSection, Button> _sectionButtons = new Dictionary<SidebarSection, Button>();
@@ -88,6 +94,7 @@ namespace HDTplugins.Views
         private bool _heroSortDescending = true;
         private string _expandedHeroCardId;
         private MatchStatsPage _currentMatchStatsPage = MatchStatsPage.TavernTempo;
+        private SettingsPage _currentSettingsPage = SettingsPage.Main;
         private TrinketFilter _currentTrinketFilter = TrinketFilter.All;
         private TimewarpFilter _currentTimewarpFilter = TimewarpFilter.All;
         private DateTime _anchorDate = DateTime.Today;
@@ -362,6 +369,7 @@ namespace HDTplugins.Views
         {
             _settingsService.Reload();
             _selectedMatchId = null;
+            _currentSettingsPage = SettingsPage.Main;
             _currentSection = SidebarSection.Settings;
             RefreshSectionButtons();
             RebuildContent();
@@ -691,6 +699,8 @@ namespace HDTplugins.Views
         private UIElement BuildSettingsView()
         {
             _settingsService.Reload();
+            if (_currentSettingsPage == SettingsPage.TagManagement)
+                return BuildTagManagementView();
 
             var currentLanguage = string.IsNullOrWhiteSpace(_settingsService.Settings.Language)
                 ? LocalizationService.CurrentCulture.Name
@@ -805,8 +815,29 @@ namespace HDTplugins.Views
                 Foreground = MutedTextBrush,
                 FontSize = 12,
                 TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 0, 0, 18)
+                Margin = new Thickness(0, 0, 0, 14)
             });
+
+            var manageTagsButton = new Button
+            {
+                Content = Loc.S("Settings_ManageTags"),
+                Height = 34,
+                MinWidth = 140,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Background = SurfaceAltBrush,
+                Foreground = PrimaryTextBrush,
+                BorderBrush = BorderSubtleBrush,
+                BorderThickness = DefaultBorderThickness,
+                FontSize = 14,
+                FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(0, 0, 0, 18)
+            };
+            manageTagsButton.Click += delegate
+            {
+                _currentSettingsPage = SettingsPage.TagManagement;
+                RebuildContent();
+            };
+            stack.Children.Add(manageTagsButton);
 
             var saveButton = new Button
             {
@@ -839,6 +870,189 @@ namespace HDTplugins.Views
             stack.Children.Add(saveButton);
 
             return panel;
+        }
+
+        private UIElement BuildTagManagementView()
+        {
+            var scrollViewer = new ScrollViewer
+            {
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+            };
+
+            var panel = new StackPanel { MaxWidth = 560 };
+            scrollViewer.Content = panel;
+
+            var backButton = new Button
+            {
+                Content = Loc.S("Common_Back"),
+                Height = 32,
+                MinWidth = 88,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Background = SurfaceAltBrush,
+                Foreground = PrimaryTextBrush,
+                BorderBrush = BorderSubtleBrush,
+                BorderThickness = DefaultBorderThickness,
+                FontSize = 13,
+                FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(0, 0, 0, 12)
+            };
+            backButton.Click += delegate
+            {
+                _currentSettingsPage = SettingsPage.Main;
+                RebuildContent();
+            };
+            panel.Children.Add(backButton);
+
+            var card = CreateCardBorder(SurfaceBrush, new Thickness(20));
+            panel.Children.Add(card);
+
+            var stack = new StackPanel();
+            card.Child = stack;
+
+            stack.Children.Add(new TextBlock
+            {
+                Text = Loc.S("TagManager_Title"),
+                FontSize = 20,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = PrimaryTextBrush,
+                Margin = new Thickness(0, 0, 0, 12)
+            });
+
+            stack.Children.Add(new TextBlock
+            {
+                Text = Loc.S("TagManager_Description"),
+                Foreground = MutedTextBrush,
+                FontSize = 12,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 18)
+            });
+
+            var addGrid = new Grid { Margin = new Thickness(0, 0, 0, 18) };
+            addGrid.ColumnDefinitions.Add(new ColumnDefinition());
+            addGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            stack.Children.Add(addGrid);
+
+            var tagInput = new TextBox
+            {
+                MinWidth = 220,
+                Height = 34,
+                Padding = new Thickness(10, 6, 10, 6),
+                Background = SurfaceAltBrush,
+                Foreground = PrimaryTextBrush,
+                BorderBrush = BorderSubtleBrush,
+                BorderThickness = DefaultBorderThickness
+            };
+            Grid.SetColumn(tagInput, 0);
+            addGrid.Children.Add(tagInput);
+
+            var addButton = new Button
+            {
+                Content = Loc.S("TagManager_Add"),
+                Width = 88,
+                Height = 34,
+                Margin = new Thickness(12, 0, 0, 0),
+                Background = AccentBrush,
+                Foreground = PrimaryTextBrush,
+                BorderBrush = AccentHoverBrush,
+                BorderThickness = DefaultBorderThickness,
+                FontSize = 14,
+                FontWeight = FontWeights.SemiBold
+            };
+            addButton.Click += delegate
+            {
+                if (_store.AddCustomTag(tagInput.Text))
+                {
+                    RebuildContent();
+                    return;
+                }
+
+                MessageBox.Show(this, Loc.S("TagManager_AddFailed"), Loc.S("TagManager_Title"), MessageBoxButton.OK, MessageBoxImage.Information);
+            };
+            Grid.SetColumn(addButton, 1);
+            addGrid.Children.Add(addButton);
+
+            var tagDefinitions = _store.GetAvailableTagDefinitions();
+            if (tagDefinitions.Count == 0)
+            {
+                stack.Children.Add(new TextBlock
+                {
+                    Text = Loc.S("TagManager_Empty"),
+                    Foreground = MutedTextBrush,
+                    FontSize = 14
+                });
+                return scrollViewer;
+            }
+
+            var tagWrapPanel = new WrapPanel
+            {
+                Margin = new Thickness(0, 0, 0, 4)
+            };
+            stack.Children.Add(tagWrapPanel);
+
+            foreach (var tagDefinition in tagDefinitions)
+            {
+                tagWrapPanel.Children.Add(BuildTagManagementRow(tagDefinition));
+            }
+
+            return scrollViewer;
+        }
+
+        private UIElement BuildTagManagementRow(LineupTagDefinition tagDefinition)
+        {
+            var border = CreateCardBorder(SurfaceAltBrush, new Thickness(14, 10, 14, 10), new Thickness(0, 0, 8, 8));
+            border.HorizontalAlignment = HorizontalAlignment.Left;
+            border.MinWidth = 160;
+
+            var contentPanel = new StackPanel();
+            border.Child = contentPanel;
+
+            contentPanel.Children.Add(new TextBlock
+            {
+                Text = tagDefinition?.Name ?? string.Empty,
+                Foreground = PrimaryTextBrush,
+                FontSize = 14,
+                FontWeight = FontWeights.SemiBold
+            });
+
+            contentPanel.Children.Add(new TextBlock
+            {
+                Text = tagDefinition != null && tagDefinition.IsEditable ? Loc.S("TagManager_CustomTag") : Loc.S("TagManager_BuiltInTag"),
+                Foreground = MutedTextBrush,
+                FontSize = 12,
+                Margin = new Thickness(0, 4, 0, 0)
+            });
+
+            if (tagDefinition != null && tagDefinition.IsEditable)
+            {
+                var deleteButton = new Button
+                {
+                    Content = Loc.S("TagManager_Delete"),
+                    Width = 88,
+                    Height = 32,
+                    Margin = new Thickness(12, 0, 0, 0),
+                    Background = SurfaceBrush,
+                    Foreground = PrimaryTextBrush,
+                    BorderBrush = BorderSubtleBrush,
+                    BorderThickness = DefaultBorderThickness,
+                    FontSize = 13,
+                    FontWeight = FontWeights.SemiBold,
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                deleteButton.Click += delegate
+                {
+                    if (_store.RemoveCustomTag(tagDefinition.Name))
+                    {
+                        RebuildContent();
+                        return;
+                    }
+
+                    MessageBox.Show(this, Loc.S("TagManager_DeleteFailed"), Loc.S("TagManager_Title"), MessageBoxButton.OK, MessageBoxImage.Information);
+                };
+                contentPanel.Children.Add(deleteButton);
+            }
+
+            return border;
         }
 
         private UIElement BuildRaceStatsView()

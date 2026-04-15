@@ -89,6 +89,21 @@ namespace HDTplugins.Services
             return _lineupTagService.GetAvailableTags(GetSnapshotVersionDisplayName(snapshot));
         }
 
+        public IReadOnlyList<LineupTagDefinition> GetAvailableTagDefinitions(BgSnapshot snapshot = null)
+        {
+            return _lineupTagService.GetAvailableTagDefinitions(GetSnapshotVersionDisplayName(snapshot));
+        }
+
+        public bool AddCustomTag(string tagName)
+        {
+            return _lineupTagService.AddCustomTag(tagName);
+        }
+
+        public bool RemoveCustomTag(string tagName)
+        {
+            return _lineupTagService.RemoveCustomTag(tagName);
+        }
+
         public AccountRecord InitializeSelectedAccount(string preferredAccountKey)
         {
             var resolved = ResolveExistingAccount(preferredAccountKey) ?? GetMostRecentAccount() ?? GetAvailableAccounts().FirstOrDefault() ?? CreateUnknownAccount();
@@ -1188,6 +1203,7 @@ namespace HDTplugins.Services
                 new RaceDefinition("MECHANICAL", "机械", "Mech"),
                 new RaceDefinition("MURLOC", "鱼人"),
                 new RaceDefinition("NAGA", "娜迦", "Naga"),
+                new RaceDefinition("NEUTRAL", "中立", "Neutral"),
                 new RaceDefinition("PIRATE", "海盗"),
                 new RaceDefinition("QUILBOAR", "野猪人"),
                 new RaceDefinition("UNDEAD", "亡灵")

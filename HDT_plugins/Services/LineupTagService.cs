@@ -1,5 +1,6 @@
 ﻿using HDTplugins.Models;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -15,32 +16,126 @@ namespace HDTplugins.Services
         private readonly JavaScriptSerializer _serializer = new JavaScriptSerializer();
         private const string ResourceName = "HDT_plugins.Tables.lineup_tags.json";
         private LineupTagConfig _config = new LineupTagConfig();
+        private string _configFilePath;
 
-        public string ConfigPath => "embedded:" + ResourceName;
+        public string ConfigPath => string.IsNullOrWhiteSpace(_configFilePath) ? "embedded:" + ResourceName : _configFilePath;
 
         public void Initialize(string tablesDir)
         {
+            _configFilePath = string.IsNullOrWhiteSpace(tablesDir)
+                ? null
+                : Path.Combine(tablesDir, "lineup_tags.json");
+            EnsureConfigFileExists();
             Reload();
             HdtLog.Info("[BGStats] TAG 配置来源: " + ConfigPath);
         }
 
         public IReadOnlyList<string> GetAvailableTags(string versionDisplayName = null)
         {
+            return GetAvailableTagDefinitions(versionDisplayName)
+                .Select(x => x.Name)
+                .ToList();
+        }
+
+        public IReadOnlyList<LineupTagDefinition> GetAvailableTagDefinitions(string versionDisplayName = null)
+        {
             Reload();
-            var tags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var tag in _config.AvailableTags ?? new List<string>())
+
+            var tags = new Dictionary<string, LineupTagDefinition>(StringComparer.OrdinalIgnoreCase);
+            foreach (var definition in _config.AvailableTags ?? new List<LineupTagDefinition>())
             {
-                if (!string.IsNullOrWhiteSpace(tag) && IsManualTagVisible(tag, versionDisplayName))
-                    tags.Add(tag.Trim());
+                if (definition == null || !IsManualTagVisible(definition.Name, versionDisplayName))
+                    continue;
+
+                var normalizedName = NormalizeTagName(definition.Name);
+                if (string.IsNullOrWhiteSpace(normalizedName))
+                    continue;
+
+                tags[normalizedName] = new LineupTagDefinition
+                {
+                    Name = normalizedName,
+                    IsEditable = definition.IsEditable
+                };
             }
 
             foreach (var rule in _config.Rules ?? new List<LineupTagRule>())
             {
-                if (!string.IsNullOrWhiteSpace(rule.Tag) && IsRuleVisible(rule, versionDisplayName))
-                    tags.Add(rule.Tag.Trim());
+                if (string.IsNullOrWhiteSpace(rule?.Tag) || !IsRuleVisible(rule, versionDisplayName))
+                    continue;
+
+                var normalizedTag = NormalizeTagName(rule.Tag);
+                if (string.IsNullOrWhiteSpace(normalizedTag) || tags.ContainsKey(normalizedTag))
+                    continue;
+
+                tags[normalizedTag] = new LineupTagDefinition
+                {
+                    Name = normalizedTag,
+                    IsEditable = false
+                };
             }
 
-            return tags.OrderBy(x => x, StringComparer.CurrentCultureIgnoreCase).ToList();
+            return tags.Values
+                .OrderBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
+        }
+
+        public bool AddCustomTag(string tagName)
+        {
+            EnsureConfigFileExists();
+            Reload();
+
+            var normalizedTag = NormalizeTagName(tagName);
+            if (string.IsNullOrWhiteSpace(normalizedTag))
+                return false;
+
+            var exists = GetAvailableTagDefinitions()
+                .Any(x => string.Equals(x.Name, normalizedTag, StringComparison.OrdinalIgnoreCase));
+            if (exists)
+                return false;
+
+            _config.AvailableTags = (_config.AvailableTags ?? new List<LineupTagDefinition>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(NormalizeTagName(x.Name)))
+                .Select(x => new LineupTagDefinition
+                {
+                    Name = NormalizeTagName(x.Name),
+                    IsEditable = x.IsEditable
+                })
+                .ToList();
+
+            _config.AvailableTags.Add(new LineupTagDefinition
+            {
+                Name = normalizedTag,
+                IsEditable = true
+            });
+
+            SaveConfig();
+            Reload();
+            return true;
+        }
+
+        public bool RemoveCustomTag(string tagName)
+        {
+            EnsureConfigFileExists();
+            Reload();
+
+            var normalizedTag = NormalizeTagName(tagName);
+            if (string.IsNullOrWhiteSpace(normalizedTag))
+                return false;
+
+            var target = (_config.AvailableTags ?? new List<LineupTagDefinition>())
+                .FirstOrDefault(x => x != null
+                    && x.IsEditable
+                    && string.Equals(NormalizeTagName(x.Name), normalizedTag, StringComparison.OrdinalIgnoreCase));
+            if (target == null)
+                return false;
+
+            _config.AvailableTags = (_config.AvailableTags ?? new List<LineupTagDefinition>())
+                .Where(x => x != null && !ReferenceEquals(x, target))
+                .ToList();
+
+            SaveConfig();
+            Reload();
+            return true;
         }
 
         public IReadOnlyList<string> Evaluate(BgSnapshot snapshot, string versionDisplayName = null)
@@ -92,24 +187,154 @@ namespace HDTplugins.Services
             return relatedRules.Any(rule => IsRuleVisible(rule, versionDisplayName));
         }
 
-        private void Reload()
+        private static string NormalizeTagName(string tagName)
+        {
+            return string.IsNullOrWhiteSpace(tagName) ? string.Empty : tagName.Trim();
+        }
+
+        private static bool ConvertToBool(object value)
+        {
+            if (value is bool boolValue)
+                return boolValue;
+            if (value is string stringValue && bool.TryParse(stringValue, out var parsedBool))
+                return parsedBool;
+            if (value is int intValue)
+                return intValue != 0;
+            if (value is long longValue)
+                return longValue != 0;
+            return false;
+        }
+
+        public void Reload()
         {
             try
             {
-                var json = string.Join(Environment.NewLine,
-                    EmbeddedJsonLoader.ReadRequiredText(ResourceName)
-                        .Split(new[] { "\r\n", "\n" }, StringSplitOptions.None)
-                        .Where(line => !line.TrimStart().StartsWith("//", StringComparison.Ordinal)));
-
-                _config = string.IsNullOrWhiteSpace(json)
-                    ? new LineupTagConfig()
-                    : (_serializer.Deserialize<LineupTagConfig>(json) ?? new LineupTagConfig());
+                var json = LoadConfigJson();
+                _config = ParseConfig(json);
             }
             catch (Exception ex)
             {
                 _config = new LineupTagConfig();
-                HdtLog.Error("[BGStats] 读取嵌入式 TAG 规则失败: " + ex.Message);
+                HdtLog.Error("[BGStats] 读取 TAG 规则失败: " + ex.Message);
             }
+        }
+
+        private void EnsureConfigFileExists()
+        {
+            if (string.IsNullOrWhiteSpace(_configFilePath))
+                return;
+
+            var directory = Path.GetDirectoryName(_configFilePath);
+            if (!string.IsNullOrWhiteSpace(directory))
+                Directory.CreateDirectory(directory);
+
+            if (File.Exists(_configFilePath))
+                return;
+
+            File.WriteAllText(_configFilePath, EmbeddedJsonLoader.ReadRequiredText(ResourceName), Encoding.UTF8);
+        }
+
+        private string LoadConfigJson()
+        {
+            string rawJson = null;
+            if (!string.IsNullOrWhiteSpace(_configFilePath) && File.Exists(_configFilePath))
+                rawJson = File.ReadAllText(_configFilePath, Encoding.UTF8);
+
+            if (string.IsNullOrWhiteSpace(rawJson))
+                rawJson = EmbeddedJsonLoader.ReadRequiredText(ResourceName);
+
+            return string.Join(Environment.NewLine,
+                (rawJson ?? string.Empty)
+                    .Split(new[] { "\r\n", "\n" }, StringSplitOptions.None)
+                    .Where(line => !line.TrimStart().StartsWith("//", StringComparison.Ordinal)));
+        }
+
+        private LineupTagConfig ParseConfig(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+                return new LineupTagConfig();
+
+            var raw = _serializer.DeserializeObject(json) as IDictionary<string, object>;
+            if (raw == null)
+                return new LineupTagConfig();
+
+            return new LineupTagConfig
+            {
+                AvailableTags = ParseAvailableTags(raw.ContainsKey("availableTags") ? raw["availableTags"] : null),
+                Rules = ParseRules(raw.ContainsKey("rules") ? raw["rules"] : null)
+            };
+        }
+
+        private List<LineupTagDefinition> ParseAvailableTags(object rawAvailableTags)
+        {
+            var result = new List<LineupTagDefinition>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var items = rawAvailableTags as ArrayList;
+            if (items == null)
+                return result;
+
+            foreach (var item in items)
+            {
+                string name = null;
+                var isEditable = false;
+                if (item is string rawName)
+                {
+                    name = rawName;
+                }
+                else if (item is IDictionary<string, object> dictionary)
+                {
+                    if (dictionary.ContainsKey("name"))
+                        name = dictionary["name"] as string;
+                    if (dictionary.ContainsKey("isEditable"))
+                        isEditable = ConvertToBool(dictionary["isEditable"]);
+                }
+
+                var normalizedName = NormalizeTagName(name);
+                if (string.IsNullOrWhiteSpace(normalizedName) || !seen.Add(normalizedName))
+                    continue;
+
+                result.Add(new LineupTagDefinition
+                {
+                    Name = normalizedName,
+                    IsEditable = isEditable
+                });
+            }
+
+            return result;
+        }
+
+        private List<LineupTagRule> ParseRules(object rawRules)
+        {
+            try
+            {
+                var rulesJson = _serializer.Serialize(rawRules ?? new ArrayList());
+                return _serializer.Deserialize<List<LineupTagRule>>(rulesJson) ?? new List<LineupTagRule>();
+            }
+            catch
+            {
+                return new List<LineupTagRule>();
+            }
+        }
+
+        private void SaveConfig()
+        {
+            if (string.IsNullOrWhiteSpace(_configFilePath))
+                return;
+
+            var serializable = new
+            {
+                availableTags = (_config.AvailableTags ?? new List<LineupTagDefinition>())
+                    .Where(x => x != null && !string.IsNullOrWhiteSpace(NormalizeTagName(x.Name)))
+                    .Select(x => new
+                    {
+                        name = NormalizeTagName(x.Name),
+                        isEditable = x.IsEditable
+                    })
+                    .ToList(),
+                rules = _config.Rules ?? new List<LineupTagRule>()
+            };
+
+            File.WriteAllText(_configFilePath, _serializer.Serialize(serializable), Encoding.UTF8);
         }
 
         private static bool EvaluateCondition(LineupTagCondition condition, BgSnapshot snapshot)
@@ -132,7 +357,7 @@ namespace HDTplugins.Services
             switch (loweredType)
             {
                 case "minionracecountatleast":
-                    return finalBoard.Count(x => string.Equals(x.Race, condition.Race, StringComparison.OrdinalIgnoreCase)) >= condition.Value;
+                    return CountMinionsByRace(finalBoard, condition.Race) >= condition.Value;
                 case "cardidexists":
                     return finalBoard.Any(x => string.Equals(x.CardId, condition.CardId, StringComparison.OrdinalIgnoreCase));
                 case "cardidcountatleast":
@@ -165,6 +390,26 @@ namespace HDTplugins.Services
                 default:
                     return false;
             }
+        }
+
+        private static int CountMinionsByRace(IEnumerable<BgBoardMinionSnapshot> finalBoard, string race)
+        {
+            var normalizedRace = string.IsNullOrWhiteSpace(race) ? string.Empty : race.Trim();
+            if (string.Equals(normalizedRace, "NEUTRAL", StringComparison.OrdinalIgnoreCase))
+            {
+                return (finalBoard ?? Array.Empty<BgBoardMinionSnapshot>())
+                    .Count(x => x != null && IsNeutralRaceValue(x.Race));
+            }
+
+            return (finalBoard ?? Array.Empty<BgBoardMinionSnapshot>())
+                .Count(x => x != null && string.Equals(x.Race, normalizedRace, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static bool IsNeutralRaceValue(string race)
+        {
+            return string.IsNullOrWhiteSpace(race)
+                || string.Equals(race, "INVALID", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(race, "BLANK", StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool HasKeyword(BgKeywordState keywords, string keyword)

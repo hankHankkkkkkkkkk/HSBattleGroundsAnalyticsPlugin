@@ -33,7 +33,7 @@ namespace HDTplugins.Services
             };
             _httpClient = new HttpClient(handler, true);
             _httpClient.Timeout = TimeSpan.FromSeconds(20);
-            _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("HSBattleGroundsAnalyticsPlugin-Updater/1.2.0");
+            _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("BGAnalyzeViaHank-Updater/1.2.0");
             _httpClient.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
         }
 
@@ -166,7 +166,8 @@ namespace HDTplugins.Services
                     continue;
 
                 if (asset.Name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
-                    && asset.Name.IndexOf("HDT_plugins", StringComparison.OrdinalIgnoreCase) >= 0)
+                    && (asset.Name.IndexOf("BGAnalyzeViaHank", StringComparison.OrdinalIgnoreCase) >= 0
+                        || asset.Name.IndexOf("HDT_plugins", StringComparison.OrdinalIgnoreCase) >= 0))
                     return asset;
             }
 

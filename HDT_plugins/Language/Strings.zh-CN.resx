@@ -360,6 +360,36 @@
   <data name="Tags_NoAvailable" xml:space="preserve">
     <value>没有可添加的 TAG</value>
   </data>
+  <data name="Settings_ManageTags" xml:space="preserve">
+    <value>管理tag</value>
+  </data>
+  <data name="TagManager_Title" xml:space="preserve">
+    <value>管理tag</value>
+  </data>
+  <data name="TagManager_Description" xml:space="preserve">
+    <value>内置 tag 只读。自定义 tag 保存后会立刻生效，并出现在对局详情页的 tag 选择菜单中。</value>
+  </data>
+  <data name="TagManager_Add" xml:space="preserve">
+    <value>添加</value>
+  </data>
+  <data name="TagManager_Delete" xml:space="preserve">
+    <value>删除</value>
+  </data>
+  <data name="TagManager_Empty" xml:space="preserve">
+    <value>当前没有可用 tag。</value>
+  </data>
+  <data name="TagManager_BuiltInTag" xml:space="preserve">
+    <value>内置 tag</value>
+  </data>
+  <data name="TagManager_CustomTag" xml:space="preserve">
+    <value>自定义 tag</value>
+  </data>
+  <data name="TagManager_AddFailed" xml:space="preserve">
+    <value>添加失败，请检查 tag 名称是否为空或已存在。</value>
+  </data>
+  <data name="TagManager_DeleteFailed" xml:space="preserve">
+    <value>删除该 tag 失败。</value>
+  </data>
   <data name="GameRace_BEAST" xml:space="preserve">
     <value>野兽</value>
   </data>
@@ -380,6 +410,9 @@
   </data>
   <data name="GameRace_NAGA" xml:space="preserve">
     <value>纳迦</value>
+  </data>
+  <data name="GameRace_NEUTRAL" xml:space="preserve">
+    <value>中立</value>
   </data>
   <data name="GameRace_PIRATE" xml:space="preserve">
     <value>海盗</value>

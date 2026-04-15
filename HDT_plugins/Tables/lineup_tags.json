@@ -6,7 +6,7 @@
 // 3. conditions 支持两类写法：
 //    A. 组合条件：{ "op": "all" | "any", "items": [ ... ] }
 //    B. 原子条件：{ "type": "minionRaceCountAtLeast", "race": "MECHANICAL", "value": 4 }
-// race 可用值：BEAST(野兽), DEMON(恶魔), DRAGON(龙), ELEMENTAL/ELEMENT(元素), MECHANICAL(机械), MURLOC(鱼人), NAGA(娜迦), PIRATE(海盗), QUILBOAR(野猪人), TOTEM(图腾), UNDEAD(亡灵), ALL(全部/融合怪)。
+// race 可用值：BEAST(野兽), DEMON(恶魔), DRAGON(龙), ELEMENTAL/ELEMENT(元素), MECHANICAL(机械), MURLOC(鱼人), NAGA(娜迦), PIRATE(海盗), QUILBOAR(野猪人), TOTEM(图腾), UNDEAD(亡灵), ALL(全部/融合怪), NEUTRAL(中立)。
 // 可用 type：
 // - minionRaceCountAtLeast: 终局阵容中某种族数量至少 value
 // - cardIdExists: 终局阵容中存在指定 cardId
@@ -20,24 +20,22 @@
 // - keywordCountAtLeast: 带指定关键词(keyword)的随从数量至少 value，keyword 可写 taunt/divineshield/poisonous/reborn/windfury/megawindfury/stealth/cleave
 {
   "availableTags": [
-    "机械",
-    "亡灵",
-    "龙",
-    "海盗",
-    "野兽",
-    "元素",
-    "恶魔",
-    "鱼人",
-    "娜迦",
-    "下毒",
-    "金铜须",
-    "金瑞",
-    "野猪人",
-    "未成型",
-    "",
-    "",
-    ""
-    ],
+    { "name": "机械", "isEditable": false },
+    { "name": "亡灵", "isEditable": false },
+    { "name": "龙", "isEditable": false },
+    { "name": "海盗", "isEditable": false },
+    { "name": "野兽", "isEditable": false },
+    { "name": "元素", "isEditable": false },
+    { "name": "恶魔", "isEditable": false },
+    { "name": "鱼人", "isEditable": false },
+    { "name": "娜迦", "isEditable": false },
+    { "name": "中立", "isEditable": false },
+    { "name": "下毒", "isEditable": false },
+    { "name": "金铜须", "isEditable": false },
+    { "name": "金瑞", "isEditable": false },
+    { "name": "野猪人", "isEditable": false },
+    { "name": "未成型", "isEditable": false }
+  ],
 
   "rules": [
     {
@@ -127,6 +125,15 @@
       "conditions": {
         "type": "minionRaceCountAtLeast",
         "race": "QUILBOAR",
+        "value": 4
+      }
+    },
+    {
+      "tag": "中立",
+      "priority": 100,
+      "conditions": {
+        "type": "minionRaceCountAtLeast",
+        "race": "NEUTRAL",
         "value": 4
       }
     }
