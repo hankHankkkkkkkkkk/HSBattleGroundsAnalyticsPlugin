@@ -24,6 +24,18 @@
   <data name="Plugin_MenuHeader" xml:space="preserve">
     <value>Battlegrounds Analytics</value>
   </data>
+  <data name="Update_Title" xml:space="preserve">
+    <value>Plugin Update</value>
+  </data>
+  <data name="Update_AvailableMessage" xml:space="preserve">
+    <value>A new plugin version is available.\n\nCurrent version: {0}\nLatest version: {1}\n\nDownload and prepare the update now?</value>
+  </data>
+  <data name="Update_DownloadFailedMessage" xml:space="preserve">
+    <value>Failed to download the update: {0}</value>
+  </data>
+  <data name="Update_DownloadReadyMessage" xml:space="preserve">
+    <value>Version {0} has been downloaded. Please restart HDT to finish installing the update.</value>
+  </data>
   <data name="Common_Save" xml:space="preserve">
     <value>Save</value>
   </data>

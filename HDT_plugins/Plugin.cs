@@ -3,6 +3,8 @@ using Hearthstone_Deck_Tracker.Plugins;
 using System;
 using System.Diagnostics;
 using System.Linq;
+using System.Reflection;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
@@ -32,6 +34,7 @@ namespace HDTplugins
         private BgStatsWindow _statsWindow;
         private MenuItem _menuItem;
         private DispatcherTimer _startupGameTextRefreshTimer;
+        private PluginUpdateService _updateService;
         private bool _wasHearthstoneRunning;
         private string _lastRuntimeAccountKey;
 
@@ -49,7 +52,9 @@ namespace HDTplugins
             _store.InitializeSelectedAccount(_settingsService.Settings.SelectedAccountKey);
             LocalizationService.Initialize(_settingsService.Settings.Language);
             GameTextService.Initialize();
+            _updateService = new PluginUpdateService(Assembly.GetExecutingAssembly().Location, Version);
             ScheduleStartupGameTextRefresh();
+            ScheduleUpdateCheck();
 
             _probe = new BgGameProbe();
             _menuItem = CreateQuickOpenMenuItem();
@@ -69,6 +74,8 @@ namespace HDTplugins
             _enabled = false;
             LocalizationService.LanguageChanged -= OnLanguageChanged;
             StopStartupGameTextRefreshTimer();
+            _updateService?.Dispose();
+            _updateService = null;
             TryCloseWindow();
             HdtLog.Info("[Hank的log信息] 插件已卸载（已关闭开关）");
         }
@@ -211,6 +218,81 @@ namespace HDTplugins
             _startupGameTextRefreshTimer.Stop();
             _startupGameTextRefreshTimer.Tick -= StartupGameTextRefreshTimerOnTick;
             _startupGameTextRefreshTimer = null;
+        }
+
+        private void ScheduleUpdateCheck()
+        {
+            var dispatcher = Application.Current?.Dispatcher;
+            if (dispatcher == null || _updateService == null)
+                return;
+
+            Task.Run(async () =>
+            {
+                try
+                {
+                    var availableUpdate = await _updateService.CheckForUpdateAsync().ConfigureAwait(false);
+                    if (availableUpdate == null)
+                        return;
+
+                    _ = dispatcher.BeginInvoke(new Action(() => PromptForUpdate(availableUpdate)));
+                }
+                catch (Exception ex)
+                {
+                    HdtLog.Warn("[BGStats][Update] 启动检查更新失败，已忽略: " + ex.Message);
+                }
+            });
+        }
+
+        private void PromptForUpdate(PluginUpdateService.AvailableUpdate update)
+        {
+            if (!_enabled || update == null)
+                return;
+
+            var prompt = string.Format(
+                Loc.S("Update_AvailableMessage"),
+                Version,
+                update.VersionText);
+            var result = MessageBox.Show(
+                prompt,
+                Loc.S("Update_Title"),
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Information);
+            if (result != MessageBoxResult.Yes)
+                return;
+
+            Task.Run(async () =>
+            {
+                PluginUpdateService.PrepareUpdateResult prepareResult;
+                try
+                {
+                    prepareResult = await _updateService.DownloadAndPrepareUpdateAsync(update).ConfigureAwait(false);
+                    prepareResult.Message = prepareResult.Success
+                        ? Loc.F("Update_DownloadReadyMessage", update.VersionText)
+                        : Loc.F("Update_DownloadFailedMessage", prepareResult.Message);
+                }
+                catch (Exception ex)
+                {
+                    prepareResult = new PluginUpdateService.PrepareUpdateResult
+                    {
+                        Success = false,
+                        Message = Loc.F("Update_DownloadFailedMessage", ex.Message)
+                    };
+                    HdtLog.Error("[BGStats][Update] 下载更新失败: " + ex.Message);
+                }
+
+                var dispatcher = Application.Current?.Dispatcher;
+                if (dispatcher == null)
+                    return;
+
+                _ = dispatcher.BeginInvoke(new Action(() =>
+                {
+                    MessageBox.Show(
+                        prepareResult.Message,
+                        Loc.S("Update_Title"),
+                        MessageBoxButton.OK,
+                        prepareResult.Success ? MessageBoxImage.Information : MessageBoxImage.Warning);
+                }));
+            });
         }
 
         private MenuItem CreateQuickOpenMenuItem()

@@ -129,6 +129,18 @@
   <data name="Plugin_MenuHeader" xml:space="preserve">
     <value>Hank的酒馆数据分析</value>
   </data>
+  <data name="Update_Title" xml:space="preserve">
+    <value>插件更新</value>
+  </data>
+  <data name="Update_AvailableMessage" xml:space="preserve">
+    <value>检测到新的插件版本。\n\n当前版本：{0}\n最新版本：{1}\n\n是否立即下载并准备更新？</value>
+  </data>
+  <data name="Update_DownloadFailedMessage" xml:space="preserve">
+    <value>下载更新失败：{0}</value>
+  </data>
+  <data name="Update_DownloadReadyMessage" xml:space="preserve">
+    <value>版本 {0} 已下载完成。请重启 HDT 以完成插件更新。</value>
+  </data>
   <data name="Common_Save" xml:space="preserve">
     <value>保存</value>
   </data>
