@@ -53,6 +53,26 @@ namespace HDTplugins.Views
             PickRate
         }
 
+        private enum TrinketSortColumn
+        {
+            Name,
+            Matches,
+            AveragePlacement,
+            PickRate,
+            FirstRate,
+            ScoreRate
+        }
+
+        private enum TimewarpSortColumn
+        {
+            Name,
+            AppearanceRate,
+            PickRate,
+            AveragePlacement,
+            FirstRate,
+            ScoreRate
+        }
+
         private enum MatchStatsPage
         {
             TavernTempo,
@@ -96,7 +116,11 @@ namespace HDTplugins.Views
         private MatchStatsPage _currentMatchStatsPage = MatchStatsPage.TavernTempo;
         private SettingsPage _currentSettingsPage = SettingsPage.Main;
         private TrinketFilter _currentTrinketFilter = TrinketFilter.All;
+        private TrinketSortColumn _trinketSortColumn = TrinketSortColumn.Matches;
+        private bool _trinketSortDescending = true;
         private TimewarpFilter _currentTimewarpFilter = TimewarpFilter.All;
+        private TimewarpSortColumn _timewarpSortColumn = TimewarpSortColumn.AppearanceRate;
+        private bool _timewarpSortDescending = true;
         private DateTime _anchorDate = DateTime.Today;
         private static readonly Brush WindowBackgroundBrush = CreateBrush(32, 34, 38);
         private static readonly Brush SidebarBackgroundBrush = CreateBrush(43, 46, 52);
@@ -1972,7 +1996,8 @@ namespace HDTplugins.Views
             var root = new StackPanel();
             root.Children.Add(BuildTrinketFilterBar());
 
-            if (summary == null || summary.Rows.Count == 0)
+            var rows = SortTrinketRows(summary?.Rows);
+            if (rows.Count == 0)
             {
                 root.Children.Add(new TextBlock
                 {
@@ -1985,10 +2010,63 @@ namespace HDTplugins.Views
             }
 
             root.Children.Add(BuildTrinketHeaderRow());
-            foreach (var row in summary.Rows)
+            foreach (var row in rows)
                 root.Children.Add(BuildTrinketRow(row));
 
             return root;
+        }
+
+        private IReadOnlyList<TrinketStatsRow> SortTrinketRows(IReadOnlyList<TrinketStatsRow> rows)
+        {
+            var ordered = rows ?? Array.Empty<TrinketStatsRow>();
+            switch (_trinketSortColumn)
+            {
+                case TrinketSortColumn.Name:
+                    return (_trinketSortDescending
+                        ? ordered.OrderByDescending(x => x.CardName, StringComparer.CurrentCultureIgnoreCase)
+                        : ordered.OrderBy(x => x.CardName, StringComparer.CurrentCultureIgnoreCase))
+                        .ThenByDescending(x => x.MatchCount)
+                        .ThenBy(x => x.AveragePlacement)
+                        .ToList();
+                case TrinketSortColumn.AveragePlacement:
+                    return (_trinketSortDescending
+                        ? ordered.OrderByDescending(x => x.AveragePlacement)
+                        : ordered.OrderBy(x => x.AveragePlacement))
+                        .ThenByDescending(x => x.MatchCount)
+                        .ThenBy(x => x.CardName, StringComparer.CurrentCultureIgnoreCase)
+                        .ToList();
+                case TrinketSortColumn.PickRate:
+                    return (_trinketSortDescending
+                        ? ordered.OrderByDescending(x => x.PickRate)
+                        : ordered.OrderBy(x => x.PickRate))
+                        .ThenByDescending(x => x.MatchCount)
+                        .ThenBy(x => x.AveragePlacement)
+                        .ThenBy(x => x.CardName, StringComparer.CurrentCultureIgnoreCase)
+                        .ToList();
+                case TrinketSortColumn.FirstRate:
+                    return (_trinketSortDescending
+                        ? ordered.OrderByDescending(x => x.FirstRate)
+                        : ordered.OrderBy(x => x.FirstRate))
+                        .ThenByDescending(x => x.MatchCount)
+                        .ThenBy(x => x.AveragePlacement)
+                        .ThenBy(x => x.CardName, StringComparer.CurrentCultureIgnoreCase)
+                        .ToList();
+                case TrinketSortColumn.ScoreRate:
+                    return (_trinketSortDescending
+                        ? ordered.OrderByDescending(x => x.ScoreRate)
+                        : ordered.OrderBy(x => x.ScoreRate))
+                        .ThenByDescending(x => x.MatchCount)
+                        .ThenBy(x => x.AveragePlacement)
+                        .ThenBy(x => x.CardName, StringComparer.CurrentCultureIgnoreCase)
+                        .ToList();
+                default:
+                    return (_trinketSortDescending
+                        ? ordered.OrderByDescending(x => x.MatchCount)
+                        : ordered.OrderBy(x => x.MatchCount))
+                        .ThenBy(x => x.AveragePlacement)
+                        .ThenBy(x => x.CardName, StringComparer.CurrentCultureIgnoreCase)
+                        .ToList();
+            }
         }
 
         private UIElement BuildTrinketFilterBar()
@@ -2031,12 +2109,40 @@ namespace HDTplugins.Views
 
             var grid = CreateTrinketGrid();
             border.Child = grid;
-            grid.Children.Add(CreateTavernTempoCell(Loc.S("TrinketStats_HeaderName"), 0, FontWeights.SemiBold, Brushes.White));
-            grid.Children.Add(CreateTavernTempoCell(Loc.S("Common_MatchesLabel"), 1, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
-            grid.Children.Add(CreateTavernTempoCell(Loc.S("TrinketStats_HeaderPickRate"), 2, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
-            grid.Children.Add(CreateTavernTempoCell(Loc.S("Common_FirstRateLabel"), 3, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
-            grid.Children.Add(CreateTavernTempoCell(Loc.S("Common_ScoreRateLabel"), 4, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
+            grid.Children.Add(CreateTrinketHeaderButton("TrinketStats_HeaderName", TrinketSortColumn.Name, 0, HorizontalAlignment.Left));
+            grid.Children.Add(CreateTrinketHeaderButton("Common_MatchesLabel", TrinketSortColumn.Matches, 1));
+            grid.Children.Add(CreateTrinketHeaderButton("Common_AvgPlacementLabel", TrinketSortColumn.AveragePlacement, 2));
+            grid.Children.Add(CreateTrinketHeaderButton("TrinketStats_HeaderPickRate", TrinketSortColumn.PickRate, 3));
+            grid.Children.Add(CreateTrinketHeaderButton("Common_FirstRateLabel", TrinketSortColumn.FirstRate, 4));
+            grid.Children.Add(CreateTrinketHeaderButton("Common_ScoreRateLabel", TrinketSortColumn.ScoreRate, 5));
             return border;
+        }
+
+        private UIElement CreateTrinketHeaderButton(string resourceKey, TrinketSortColumn column, int columnIndex, HorizontalAlignment alignment = HorizontalAlignment.Center)
+        {
+            var button = new Button
+            {
+                Content = Loc.S(resourceKey),
+                FontSize = 14,
+                FontWeight = FontWeights.SemiBold,
+                HorizontalContentAlignment = alignment
+            };
+            ApplyNavigationButtonChrome(button);
+            button.Foreground = PrimaryTextBrush;
+            button.Click += delegate
+            {
+                if (_trinketSortColumn == column)
+                    _trinketSortDescending = !_trinketSortDescending;
+                else
+                {
+                    _trinketSortColumn = column;
+                    _trinketSortDescending = column != TrinketSortColumn.Name && column != TrinketSortColumn.AveragePlacement;
+                }
+
+                _contentHost.Child = BuildMatchStatsView();
+            };
+            Grid.SetColumn(button, columnIndex);
+            return button;
         }
 
         private UIElement BuildTrinketRow(TrinketStatsRow row)
@@ -2047,20 +2153,22 @@ namespace HDTplugins.Views
             border.Child = grid;
             grid.Children.Add(CreateTavernTempoCell(row.CardName, 0, FontWeights.SemiBold, LightForegroundBrush));
             grid.Children.Add(CreateTavernTempoCell(row.MatchCount.ToString(CultureInfo.CurrentCulture), 1, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
-            grid.Children.Add(CreateTavernTempoCell(FormatRate(row.PickRate, row.MatchCount > 0), 2, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
-            grid.Children.Add(CreateTavernTempoCell(FormatRate(row.FirstRate, row.MatchCount > 0), 3, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
-            grid.Children.Add(CreateTavernTempoCell(FormatRate(row.ScoreRate, row.MatchCount > 0), 4, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(row.MatchCount > 0 ? row.AveragePlacement.ToString("F2", CultureInfo.CurrentCulture) : "-", 2, FontWeights.Normal, row.MatchCount > 0 ? GetPlacementBrush(row.AveragePlacement) : NeutralValueBrush, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(FormatRate(row.PickRate, row.MatchCount > 0), 3, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(FormatRate(row.FirstRate, row.MatchCount > 0), 4, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(FormatRate(row.ScoreRate, row.MatchCount > 0), 5, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
             return border;
         }
 
         private Grid CreateTrinketGrid()
         {
             var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.4, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.2, GridUnitType.Star) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.8, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.9, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.95, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.95, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.95, GridUnitType.Star) });
             return grid;
         }
 
@@ -2069,7 +2177,8 @@ namespace HDTplugins.Views
             var root = new StackPanel();
             root.Children.Add(BuildTimewarpFilterBar());
 
-            if (summary == null || summary.Rows.Count == 0)
+            var rows = SortTimewarpRows(summary?.Rows);
+            if (rows.Count == 0)
             {
                 root.Children.Add(new TextBlock
                 {
@@ -2082,10 +2191,69 @@ namespace HDTplugins.Views
             }
 
             root.Children.Add(BuildTimewarpHeaderRow());
-            foreach (var row in summary.Rows)
+            foreach (var row in rows)
                 root.Children.Add(BuildTimewarpRow(row));
 
             return root;
+        }
+
+        private IReadOnlyList<TimewarpStatsRow> SortTimewarpRows(IReadOnlyList<TimewarpStatsRow> rows)
+        {
+            var ordered = rows ?? Array.Empty<TimewarpStatsRow>();
+            switch (_timewarpSortColumn)
+            {
+                case TimewarpSortColumn.Name:
+                    return (_timewarpSortDescending
+                        ? ordered.OrderByDescending(x => x.CardName, StringComparer.CurrentCultureIgnoreCase)
+                        : ordered.OrderBy(x => x.CardName, StringComparer.CurrentCultureIgnoreCase))
+                        .ThenByDescending(x => x.AppearanceCount)
+                        .ThenByDescending(x => x.PickCount)
+                        .ToList();
+                case TimewarpSortColumn.PickRate:
+                    return (_timewarpSortDescending
+                        ? ordered.OrderByDescending(x => x.PickRate)
+                        : ordered.OrderBy(x => x.PickRate))
+                        .ThenByDescending(x => x.AppearanceCount)
+                        .ThenByDescending(x => x.PickCount)
+                        .ThenBy(x => x.AveragePlacement)
+                        .ThenBy(x => x.CardName, StringComparer.CurrentCultureIgnoreCase)
+                        .ToList();
+                case TimewarpSortColumn.AveragePlacement:
+                    return (_timewarpSortDescending
+                        ? ordered.OrderByDescending(x => x.PickCount > 0 ? x.AveragePlacement : double.MaxValue)
+                        : ordered.OrderBy(x => x.PickCount > 0 ? x.AveragePlacement : double.MaxValue))
+                        .ThenByDescending(x => x.AppearanceCount)
+                        .ThenByDescending(x => x.PickCount)
+                        .ThenBy(x => x.CardName, StringComparer.CurrentCultureIgnoreCase)
+                        .ToList();
+                case TimewarpSortColumn.FirstRate:
+                    return (_timewarpSortDescending
+                        ? ordered.OrderByDescending(x => x.FirstRate)
+                        : ordered.OrderBy(x => x.FirstRate))
+                        .ThenByDescending(x => x.AppearanceCount)
+                        .ThenByDescending(x => x.PickCount)
+                        .ThenBy(x => x.AveragePlacement)
+                        .ThenBy(x => x.CardName, StringComparer.CurrentCultureIgnoreCase)
+                        .ToList();
+                case TimewarpSortColumn.ScoreRate:
+                    return (_timewarpSortDescending
+                        ? ordered.OrderByDescending(x => x.ScoreRate)
+                        : ordered.OrderBy(x => x.ScoreRate))
+                        .ThenByDescending(x => x.AppearanceCount)
+                        .ThenByDescending(x => x.PickCount)
+                        .ThenBy(x => x.AveragePlacement)
+                        .ThenBy(x => x.CardName, StringComparer.CurrentCultureIgnoreCase)
+                        .ToList();
+                default:
+                    return (_timewarpSortDescending
+                        ? ordered.OrderByDescending(x => x.AppearanceRate)
+                        : ordered.OrderBy(x => x.AppearanceRate))
+                        .ThenByDescending(x => x.AppearanceCount)
+                        .ThenByDescending(x => x.PickCount)
+                        .ThenBy(x => x.AveragePlacement)
+                        .ThenBy(x => x.CardName, StringComparer.CurrentCultureIgnoreCase)
+                        .ToList();
+            }
         }
 
         private UIElement BuildTimewarpFilterBar()
@@ -2128,12 +2296,40 @@ namespace HDTplugins.Views
 
             var grid = CreateTimewarpGrid();
             border.Child = grid;
-            grid.Children.Add(CreateTavernTempoCell(Loc.S("TimewarpStats_HeaderName"), 0, FontWeights.SemiBold, Brushes.White));
-            grid.Children.Add(CreateTavernTempoCell(Loc.S("TimewarpStats_HeaderAppearanceRate"), 1, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
-            grid.Children.Add(CreateTavernTempoCell(Loc.S("TimewarpStats_HeaderPickRate"), 2, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
-            grid.Children.Add(CreateTavernTempoCell(Loc.S("Common_FirstRateLabel"), 3, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
-            grid.Children.Add(CreateTavernTempoCell(Loc.S("Common_ScoreRateLabel"), 4, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
+            grid.Children.Add(CreateTimewarpHeaderButton("TimewarpStats_HeaderName", TimewarpSortColumn.Name, 0, HorizontalAlignment.Left));
+            grid.Children.Add(CreateTimewarpHeaderButton("TimewarpStats_HeaderAppearanceRate", TimewarpSortColumn.AppearanceRate, 1));
+            grid.Children.Add(CreateTimewarpHeaderButton("TimewarpStats_HeaderPickRate", TimewarpSortColumn.PickRate, 2));
+            grid.Children.Add(CreateTimewarpHeaderButton("Common_AvgPlacementLabel", TimewarpSortColumn.AveragePlacement, 3));
+            grid.Children.Add(CreateTimewarpHeaderButton("Common_FirstRateLabel", TimewarpSortColumn.FirstRate, 4));
+            grid.Children.Add(CreateTimewarpHeaderButton("Common_ScoreRateLabel", TimewarpSortColumn.ScoreRate, 5));
             return border;
+        }
+
+        private UIElement CreateTimewarpHeaderButton(string resourceKey, TimewarpSortColumn column, int columnIndex, HorizontalAlignment alignment = HorizontalAlignment.Center)
+        {
+            var button = new Button
+            {
+                Content = Loc.S(resourceKey),
+                FontSize = 14,
+                FontWeight = FontWeights.SemiBold,
+                HorizontalContentAlignment = alignment
+            };
+            ApplyNavigationButtonChrome(button);
+            button.Foreground = PrimaryTextBrush;
+            button.Click += delegate
+            {
+                if (_timewarpSortColumn == column)
+                    _timewarpSortDescending = !_timewarpSortDescending;
+                else
+                {
+                    _timewarpSortColumn = column;
+                    _timewarpSortDescending = column != TimewarpSortColumn.Name && column != TimewarpSortColumn.AveragePlacement;
+                }
+
+                _contentHost.Child = BuildMatchStatsView();
+            };
+            Grid.SetColumn(button, columnIndex);
+            return button;
         }
 
         private UIElement BuildTimewarpRow(TimewarpStatsRow row)
@@ -2145,19 +2341,21 @@ namespace HDTplugins.Views
             grid.Children.Add(CreateTavernTempoCell(row.CardName, 0, FontWeights.SemiBold, LightForegroundBrush));
             grid.Children.Add(CreateTavernTempoCell(FormatRate(row.AppearanceRate, row.AppearanceCount > 0), 1, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
             grid.Children.Add(CreateTavernTempoCell(FormatRate(row.PickRate, row.AppearanceCount > 0), 2, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
-            grid.Children.Add(CreateTavernTempoCell(FormatRate(row.FirstRate, row.PickCount > 0), 3, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
-            grid.Children.Add(CreateTavernTempoCell(FormatRate(row.ScoreRate, row.PickCount > 0), 4, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(row.PickCount > 0 ? row.AveragePlacement.ToString("F2", CultureInfo.CurrentCulture) : "-", 3, FontWeights.Normal, row.PickCount > 0 ? GetPlacementBrush(row.AveragePlacement) : NeutralValueBrush, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(FormatRate(row.FirstRate, row.PickCount > 0), 4, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(FormatRate(row.ScoreRate, row.PickCount > 0), 5, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
             return border;
         }
 
         private Grid CreateTimewarpGrid()
         {
             var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.4, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.2, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.95, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.95, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.9, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.95, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.95, GridUnitType.Star) });
             return grid;
         }
 

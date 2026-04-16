@@ -21,6 +21,7 @@ namespace HDTplugins.Models
         public string CardId { get; set; }
         public string CardName { get; set; }
         public int MatchCount { get; set; }
+        public double AveragePlacement { get; set; }
         public double PickRate { get; set; }
         public double FirstRate { get; set; }
         public double ScoreRate { get; set; }
@@ -48,6 +49,7 @@ namespace HDTplugins.Models
         public int PickCount { get; set; }
         public double AppearanceRate { get; set; }
         public double PickRate { get; set; }
+        public double AveragePlacement { get; set; }
         public double FirstRate { get; set; }
         public double ScoreRate { get; set; }
     }

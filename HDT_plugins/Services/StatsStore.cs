@@ -469,6 +469,7 @@ namespace HDTplugins.Services
                         CardId = pair.Key,
                         CardName = GameTextService.GetCardName(pair.Key, pair.Key),
                         MatchCount = pair.Value.Count,
+                        AveragePlacement = pair.Value.Count == 0 ? 0 : pair.Value.Average(x => x.Placement),
                         PickRate = eligibleSnapshots.Count == 0 ? 0 : pair.Value.Count / (double)eligibleSnapshots.Count,
                         FirstRate = pair.Value.Count == 0 ? 0 : pair.Value.Count(x => x.Placement == 1) / (double)pair.Value.Count,
                         ScoreRate = pair.Value.Count == 0 ? 0 : pair.Value.Count(x => x.Placement < normalizedScoreLine) / (double)pair.Value.Count
@@ -544,6 +545,7 @@ namespace HDTplugins.Services
                             PickCount = pickSnapshots.Count,
                             AppearanceRate = eligibleSnapshots.Count == 0 ? 0 : appearanceSnapshots.Count / (double)eligibleSnapshots.Count,
                             PickRate = appearanceSnapshots.Count == 0 ? 0 : pickSnapshots.Count / (double)appearanceSnapshots.Count,
+                            AveragePlacement = pickSnapshots.Count == 0 ? 0 : pickSnapshots.Average(x => x.Placement),
                             FirstRate = pickSnapshots.Count == 0 ? 0 : pickSnapshots.Count(x => x.Placement == 1) / (double)pickSnapshots.Count,
                             ScoreRate = pickSnapshots.Count == 0 ? 0 : pickSnapshots.Count(x => x.Placement < normalizedScoreLine) / (double)pickSnapshots.Count
                         };
@@ -1262,6 +1264,15 @@ namespace HDTplugins.Services
                 .ToList();
         }
 
+        private bool SnapshotHasAvailableRace(BgSnapshot snapshot, RaceDefinition raceDef)
+        {
+            if (snapshot == null || raceDef == null)
+                return false;
+
+            return (snapshot.AvailableRaces ?? Array.Empty<string>())
+                .Any(code => string.Equals(code, raceDef.Code, StringComparison.OrdinalIgnoreCase));
+        }
+
         private void PopulateRaceSynergies(RaceStatsRow row, IReadOnlyList<BgSnapshot> raceSnapshots, IReadOnlyList<BgSnapshot> allSnapshots, IReadOnlyList<RaceDefinition> raceDefs)
         {
             if (row == null || !row.AveragePlacement.HasValue)
@@ -1274,7 +1285,7 @@ namespace HDTplugins.Services
                     continue;
 
                 var synergySnapshots = raceSnapshots
-                    .Where(snapshot => SnapshotHasRaceTag(snapshot, raceDef))
+                    .Where(snapshot => SnapshotHasAvailableRace(snapshot, raceDef))
                     .ToList();
                 if (synergySnapshots.Count == 0)
                     continue;
