@@ -439,19 +439,41 @@ namespace HDTplugins.Services
         {
             var normalizedScoreLine = NormalizeScoreLine(scoreLine);
             var snapshots = LoadSnapshots();
-            var rows = new Dictionary<string, List<BgSnapshot>>(StringComparer.OrdinalIgnoreCase);
+            var appearances = new Dictionary<string, List<BgSnapshot>>(StringComparer.OrdinalIgnoreCase);
+            var picks = new Dictionary<string, List<BgSnapshot>>(StringComparer.OrdinalIgnoreCase);
             var eligibleSnapshots = snapshots
                 .Where(snapshot => ShouldShowTrinketDetails(snapshot))
                 .ToList();
 
             foreach (var snapshot in eligibleSnapshots)
             {
-                foreach (var cardId in GetSnapshotTrinketCardIds(snapshot, filter))
+                var appearanceCardIds = GetSnapshotTrinketOptionCardIds(snapshot, filter).ToList();
+                var pickedCardIds = GetSnapshotTrinketCardIds(snapshot, filter).ToList();
+
+                foreach (var pickedCardId in pickedCardIds)
                 {
-                    if (!rows.TryGetValue(cardId, out var group))
+                    if (!appearanceCardIds.Contains(pickedCardId, StringComparer.OrdinalIgnoreCase))
+                        appearanceCardIds.Add(pickedCardId);
+                }
+
+                foreach (var cardId in appearanceCardIds)
+                {
+                    if (!appearances.TryGetValue(cardId, out var group))
                     {
                         group = new List<BgSnapshot>();
-                        rows[cardId] = group;
+                        appearances[cardId] = group;
+                    }
+
+                    if (!group.Contains(snapshot))
+                        group.Add(snapshot);
+                }
+
+                foreach (var cardId in pickedCardIds)
+                {
+                    if (!picks.TryGetValue(cardId, out var group))
+                    {
+                        group = new List<BgSnapshot>();
+                        picks[cardId] = group;
                     }
 
                     if (!group.Contains(snapshot))
@@ -459,22 +481,37 @@ namespace HDTplugins.Services
                 }
             }
 
+            var cardIds = appearances.Keys
+                .Concat(picks.Keys)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
             return new TrinketStatsSummary
             {
                 Filter = filter,
                 EligibleMatches = eligibleSnapshots.Count,
-                Rows = rows
-                    .Select(pair => new TrinketStatsRow
+                Rows = cardIds
+                    .Select(cardId =>
                     {
-                        CardId = pair.Key,
-                        CardName = GameTextService.GetCardName(pair.Key, pair.Key),
-                        MatchCount = pair.Value.Count,
-                        AveragePlacement = pair.Value.Count == 0 ? 0 : pair.Value.Average(x => x.Placement),
-                        PickRate = eligibleSnapshots.Count == 0 ? 0 : pair.Value.Count / (double)eligibleSnapshots.Count,
-                        FirstRate = pair.Value.Count == 0 ? 0 : pair.Value.Count(x => x.Placement == 1) / (double)pair.Value.Count,
-                        ScoreRate = pair.Value.Count == 0 ? 0 : pair.Value.Count(x => x.Placement < normalizedScoreLine) / (double)pair.Value.Count
+                        appearances.TryGetValue(cardId, out var appearanceSnapshots);
+                        picks.TryGetValue(cardId, out var pickSnapshots);
+                        appearanceSnapshots = appearanceSnapshots ?? new List<BgSnapshot>();
+                        pickSnapshots = pickSnapshots ?? new List<BgSnapshot>();
+                        return new TrinketStatsRow
+                        {
+                            CardId = cardId,
+                            CardName = GameTextService.GetCardName(cardId, cardId),
+                            AppearanceCount = appearanceSnapshots.Count,
+                            PickCount = pickSnapshots.Count,
+                            MatchCount = pickSnapshots.Count,
+                            AveragePlacement = pickSnapshots.Count == 0 ? 0 : pickSnapshots.Average(x => x.Placement),
+                            PickRate = appearanceSnapshots.Count == 0 ? 0 : pickSnapshots.Count / (double)appearanceSnapshots.Count,
+                            FirstRate = pickSnapshots.Count == 0 ? 0 : pickSnapshots.Count(x => x.Placement == 1) / (double)pickSnapshots.Count,
+                            ScoreRate = pickSnapshots.Count == 0 ? 0 : pickSnapshots.Count(x => x.Placement < normalizedScoreLine) / (double)pickSnapshots.Count
+                        };
                     })
-                    .OrderByDescending(x => x.MatchCount)
+                    .OrderByDescending(x => x.PickCount)
+                    .ThenByDescending(x => x.AppearanceCount)
                     .ThenBy(x => x.CardName, StringComparer.CurrentCultureIgnoreCase)
                     .ToList()
             };
@@ -1635,6 +1672,24 @@ namespace HDTplugins.Services
                     && !string.IsNullOrWhiteSpace(snapshot.HeroPowerTrinketCardId))
                     cardIds.Add(snapshot.HeroPowerTrinketCardId);
             }
+
+            return cardIds
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static IReadOnlyList<string> GetSnapshotTrinketOptionCardIds(BgSnapshot snapshot, TrinketFilter filter)
+        {
+            if (snapshot == null)
+                return Array.Empty<string>();
+
+            var cardIds = new List<string>();
+            if (filter == TrinketFilter.All || filter == TrinketFilter.Lesser)
+                cardIds.AddRange(snapshot.LesserTrinketOptionCardIds ?? Array.Empty<string>());
+
+            if (filter == TrinketFilter.All || filter == TrinketFilter.Greater)
+                cardIds.AddRange(snapshot.GreaterTrinketOptionCardIds ?? Array.Empty<string>());
 
             return cardIds
                 .Where(x => !string.IsNullOrWhiteSpace(x))

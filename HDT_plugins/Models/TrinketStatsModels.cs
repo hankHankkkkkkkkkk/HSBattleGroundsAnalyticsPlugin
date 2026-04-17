@@ -20,6 +20,8 @@ namespace HDTplugins.Models
     {
         public string CardId { get; set; }
         public string CardName { get; set; }
+        public int AppearanceCount { get; set; }
+        public int PickCount { get; set; }
         public int MatchCount { get; set; }
         public double AveragePlacement { get; set; }
         public double PickRate { get; set; }

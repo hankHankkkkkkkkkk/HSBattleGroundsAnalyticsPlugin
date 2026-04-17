@@ -22,7 +22,7 @@ namespace HDTplugins
         public string Name => Loc.S("Plugin_Name");
         public string Description => Loc.S("Plugin_Description");
         public string Author => "Hank";
-        public Version Version => new Version(1, 2, 2);
+        public Version Version => new Version(1, 3, 1);
         public string ButtonText => Loc.S("Plugin_ButtonText");
         public MenuItem MenuItem => _menuItem;
 
@@ -37,6 +37,7 @@ namespace HDTplugins
         private PluginUpdateService _updateService;
         private bool _wasHearthstoneRunning;
         private string _lastRuntimeAccountKey;
+        private BgDraftOverlayService _draftOverlayService;
 
         public void OnLoad()
         {
@@ -57,6 +58,7 @@ namespace HDTplugins
             ScheduleUpdateCheck();
 
             _probe = new BgGameProbe();
+            _draftOverlayService = new BgDraftOverlayService(_store, _settingsService);
             _menuItem = CreateQuickOpenMenuItem();
             LocalizationService.LanguageChanged += OnLanguageChanged;
 
@@ -76,6 +78,8 @@ namespace HDTplugins
             StopStartupGameTextRefreshTimer();
             _updateService?.Dispose();
             _updateService = null;
+            _draftOverlayService?.Dispose();
+            _draftOverlayService = null;
             TryCloseWindow();
             HdtLog.Info("[Hank的log信息] 插件已卸载（已关闭开关）");
         }
@@ -93,6 +97,7 @@ namespace HDTplugins
 
             UpdateRuntimeAccountContext();
             _probe.Tick();
+            _draftOverlayService?.Refresh(_probe);
             if (!_probe.IsBattlegrounds || _finalizedThisMatch)
                 return;
 
@@ -133,6 +138,7 @@ namespace HDTplugins
                 var latestArchive = _store.RefreshLatestRecordedArchiveForDisplay();
                 _statsWindow?.SyncVersionSelection(latestArchive?.Key);
                 _statsWindow?.Reload();
+                _draftOverlayService?.InvalidateStats();
                 _finalizedThisMatch = true;
                 _probe.StopFinalizePolling();
             }
@@ -147,6 +153,7 @@ namespace HDTplugins
             _store.ResetMatch();
             _store.ConfirmCurrentArchiveForMatch();
             _probe.OnGameStart();
+            _draftOverlayService?.Hide();
             _lastRuntimeAccountKey = null;
             _statsWindow?.SyncVersionSelection(null);
         }
@@ -157,6 +164,7 @@ namespace HDTplugins
                 return;
 
             _probe.OnGameEnd();
+            _draftOverlayService?.Hide();
         }
 
         private void OnOpenMatchDetailRequested(string matchId)

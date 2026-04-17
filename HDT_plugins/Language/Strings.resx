@@ -556,6 +556,9 @@
   <data name="TimewarpStats_HeaderPickRate" xml:space="preserve">
     <value>Pick Rate</value>
   </data>
+  <data name="OverlayDraft_PickRateLabel" xml:space="preserve">
+    <value>Pick Rate</value>
+  </data>
   <data name="QuestStats_PageTitle" xml:space="preserve">
     <value>Quest Stats</value>
   </data>

@@ -61,6 +61,7 @@
     <Compile Include="Models\AccountRecord.cs" />
     <Compile Include="Models\ArchiveVersionInfo.cs" />
     <Compile Include="Models\BgMatchRow.cs" />
+    <Compile Include="Models\BgDraftOverlayModels.cs" />
     <Compile Include="Models\BgSnapshot.cs" />
     <Compile Include="Models\BgBoardMinionSnapshot.cs" />
     <Compile Include="Models\BgKeywordState.cs" />
@@ -81,6 +82,8 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Services\ArchiveKeyProvider.cs" />
     <Compile Include="Services\BgGameProbe.cs" />
+    <Compile Include="Services\BgDraftOverlayService.cs" />
+    <Compile Include="Services\BgDraftOverlayStatsService.cs" />
     <Compile Include="Services\EmbeddedJsonLoader.cs" />
     <Compile Include="Services\HeroStatsService.cs" />
     <Compile Include="Services\HeroStatsAggregationService.cs" />
@@ -94,6 +97,7 @@
     <Compile Include="Services\VersionDisplayService.cs" />
     <Compile Include="Services\StatsStore.cs" />
     <Compile Include="Views\BgStatsWindow.cs" />
+    <Compile Include="Views\BgDraftOverlayWindow.cs" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Language\Strings.resx">

@@ -660,6 +660,9 @@
   <data name="TimewarpStats_HeaderPickRate" xml:space="preserve">
     <value>选取率</value>
   </data>
+  <data name="OverlayDraft_PickRateLabel" xml:space="preserve">
+    <value>选取率</value>
+  </data>
   <data name="QuestStats_PageTitle" xml:space="preserve">
     <value>任务数据</value>
   </data>

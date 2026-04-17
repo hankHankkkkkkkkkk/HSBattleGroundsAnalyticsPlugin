@@ -354,30 +354,37 @@ namespace HDTplugins.Services
         {
             try
             {
-                var heroes = Core.Game.Player?.PlayerEntities?
+                var heroEntities = Core.Game.Player?.PlayerEntities?
                     .Where(e => e != null && e.IsHero && (e.HasTag(GameTag.BACON_HERO_CAN_BE_DRAFTED) || e.HasTag(GameTag.BACON_SKIN)) && !e.HasTag(GameTag.BACON_LOCKED_MULLIGAN_HERO) && e.Card != null)
                     .OrderBy(e => e.ZonePosition)
+                    .ToArray();
+
+                if (heroEntities == null || heroEntities.Length == 0)
+                {
+                    if (OfferedHeroDbfIds.Length == 0 && OfferedHeroCardIds.Length == 0)
+                        return;
+
+                    OfferedHeroDbfIds = Array.Empty<int>();
+                    OfferedHeroCardIds = Array.Empty<string>();
+                    return;
+                }
+
+                var heroes = heroEntities
                     .Select(e => e.Card.DbfId)
                     .Where(id => id > 0)
                     .ToArray();
 
-                if (heroes == null || heroes.Length == 0)
-                    return;
-
-                var mergedHeroes = OfferedHeroDbfIds
-                    .Concat(heroes)
-                    .Distinct()
-                    .OrderBy(id => id)
-                    .ToArray();
-                if (SameArray(mergedHeroes, OfferedHeroDbfIds))
-                    return;
-
-                OfferedHeroDbfIds = mergedHeroes;
-                OfferedHeroCardIds = mergedHeroes
-                    .Select(id => Cards.GetFromDbfId(id)?.Id)
+                var heroCardIds = heroEntities
+                    .Select(e => e.Card?.Id)
                     .Where(id => !string.IsNullOrWhiteSpace(id))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToArray();
+
+                if (SameArray(heroes, OfferedHeroDbfIds) && SameArray(heroCardIds, OfferedHeroCardIds))
+                    return;
+
+                OfferedHeroDbfIds = heroes;
+                OfferedHeroCardIds = heroCardIds;
                 if (nowTs < _nextOfferedLogTs)
                     return;
                 _nextOfferedLogTs = nowTs + MsToTicks(OfferedLogThrottleMs);
