@@ -375,7 +375,7 @@ namespace HDTplugins.Services
                     .ToArray();
 
                 var heroCardIds = heroEntities
-                    .Select(e => e.Card?.Id)
+                    .Select(e => HeroIdNormalizer.Normalize(e.Card?.Id))
                     .Where(id => !string.IsNullOrWhiteSpace(id))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToArray();
@@ -422,13 +422,13 @@ namespace HDTplugins.Services
                 if (!string.IsNullOrEmpty(heroA))
                 {
                     HeroSkinCardId = heroA;
-                    HeroCardId = heroA;
+                    HeroCardId = HeroIdNormalizer.Normalize(heroA);
                 }
 
                 if (!string.IsNullOrEmpty(HeroCardId))
                 {
                     _needResolveHero = false;
-                    HdtLog.Info($"[BGStats] Resolved hero: Hero={HeroCardId}, InitialHeroPowers=[{string.Join(", ", InitialHeroPowerCardIds)}], CombatHeroPowers=[{string.Join(", ", HeroPowerCardIds)}], Current=[{string.Join(", ", _currentHeroPowerCardIds)}]");
+                    HdtLog.Info($"[BGStats] Resolved hero: Hero={HeroCardId}, Skin={HeroSkinCardId ?? "null"}, InitialHeroPowers=[{string.Join(", ", InitialHeroPowerCardIds)}], CombatHeroPowers=[{string.Join(", ", HeroPowerCardIds)}], Current=[{string.Join(", ", _currentHeroPowerCardIds)}]");
                     if (RatingBefore <= 0)
                         RatingBefore = TryGetCurrentBattlegroundsRating() ?? -1;
                 }
