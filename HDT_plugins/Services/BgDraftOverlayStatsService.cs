@@ -32,7 +32,7 @@ namespace HDTplugins.Services
         {
             EnsureHeroCache();
             return (heroCardIds ?? Array.Empty<string>())
-                .Select(cardId => BuildHeroStats(cardId))
+                .Select(cardId => BuildHeroStats(HeroIdNormalizer.Normalize(cardId)))
                 .ToList();
         }
 

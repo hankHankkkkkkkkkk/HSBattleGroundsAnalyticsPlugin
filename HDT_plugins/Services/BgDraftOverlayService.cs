@@ -157,7 +157,7 @@ namespace HDTplugins.Services
         private static List<Point> GetSlots(Rect gameRect, BgDraftOverlayKind kind, int count)
         {
             var anchors = GetAnchors(kind, count);
-            var topRatio = kind == BgDraftOverlayKind.HeroPick ? 0.236 : 0.302;
+            var topRatio = kind == BgDraftOverlayKind.HeroPick ? 0.212 : 0.252;
             var safeCount = Math.Min(Math.Max(0, count), anchors.Length);
             var points = new List<Point>(safeCount);
             for (var i = 0; i < safeCount; i++)
@@ -173,10 +173,10 @@ namespace HDTplugins.Services
         private static double[] GetAnchors(BgDraftOverlayKind kind, int count)
         {
             if (kind == BgDraftOverlayKind.HeroPick)
-                return new[] { 0.16, 0.379, 0.594, 0.788 };
+                return new[] { 0.142, 0.355, 0.552, 0.724 };
 
             if (count >= 4)
-                return new[] { 0.235, 0.407, 0.575, 0.725 };
+                return new[] { 0.192, 0.358, 0.522, 0.668 };
 
             if (count == 3)
                 return new[] { 0.29, 0.5, 0.71 };
