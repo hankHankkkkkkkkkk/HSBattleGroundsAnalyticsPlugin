@@ -48,6 +48,7 @@ namespace HDTplugins.Models
         public List<BgTavernUpgradePoint> TavernUpgradeTimeline { get; set; } = new List<BgTavernUpgradePoint>();
         public List<string> AutoTags { get; set; } = new List<string>();
         public List<string> ManualTags { get; set; } = new List<string>();
+        public List<string> HiddenAutoTags { get; set; } = new List<string>();
     }
 
     public class BgTimewarpEntry

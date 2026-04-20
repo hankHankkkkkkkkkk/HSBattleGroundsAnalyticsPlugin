@@ -193,8 +193,11 @@ namespace HDTplugins.Services
                         var fileVersionText = fileVersion.FileVersion;
                         var productPatch = NormalizeRawVersion(productVersion);
                         var filePatch = NormalizeRawVersion(fileVersionText);
-                        var selectedSource = !string.IsNullOrWhiteSpace(productVersion) ? "ProductVersion" : "FileVersion";
-                        var selectedRaw = productVersion ?? fileVersionText;
+                        var selectedRaw = ChoosePreferredVersion(productVersion, fileVersionText);
+                        var selectedSource =
+                            string.Equals(selectedRaw, productVersion, StringComparison.Ordinal)
+                                ? "ProductVersion"
+                                : "FileVersion";
                         var patch = NormalizeRawVersion(selectedRaw);
                         LogVersionHitIfInteresting("ProductVersion", process, modulePath, productVersion, productPatch);
                         LogVersionHitIfInteresting("FileVersion", process, modulePath, fileVersionText, filePatch);
@@ -233,6 +236,40 @@ namespace HDTplugins.Services
                 return null;
 
             return rawVersion.Trim();
+        }
+
+        private static string ChoosePreferredVersion(string productVersion, string fileVersion)
+        {
+            var normalizedProduct = NormalizeRawVersion(productVersion);
+            var normalizedFile = NormalizeRawVersion(fileVersion);
+            if (string.IsNullOrWhiteSpace(normalizedProduct))
+                return normalizedFile;
+            if (string.IsNullOrWhiteSpace(normalizedFile))
+                return normalizedProduct;
+
+            var productScore = GetVersionSpecificityScore(normalizedProduct);
+            var fileScore = GetVersionSpecificityScore(normalizedFile);
+            if (fileScore > productScore)
+                return normalizedFile;
+            if (productScore > fileScore)
+                return normalizedProduct;
+
+            return normalizedFile.Length > normalizedProduct.Length ? normalizedFile : normalizedProduct;
+        }
+
+        private static int GetVersionSpecificityScore(string rawVersion)
+        {
+            if (string.IsNullOrWhiteSpace(rawVersion))
+                return 0;
+
+            var score = 0;
+            score += Regex.Matches(rawVersion, "\\d+").Count * 10;
+            score += rawVersion.Count(ch => ch == '.');
+            if (rawVersion.IndexOf('(') >= 0)
+                score += 25;
+            if (Regex.IsMatch(rawVersion, "[a-f]", RegexOptions.IgnoreCase))
+                score += 5;
+            return score;
         }
 
         private static ArchiveVersionInfo Clone(ArchiveVersionInfo source)

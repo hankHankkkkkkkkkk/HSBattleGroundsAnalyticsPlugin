@@ -72,6 +72,7 @@ namespace HDTplugins.Services
                 _versionDisplayService.Initialize(_tablesDir);
 
                 SetArchiveInternal(ResolveInitialArchive());
+                RepairArchiveRoutingIfNeeded();
                 BackupFileIfExists(_finalFilePath);
                 MigrateIfNeeded(oldFinal, _finalFilePath);
                 MigrateIfNeeded(oldPending, _pendingFilePath);
@@ -601,7 +602,7 @@ namespace HDTplugins.Services
             return LoadSnapshots().FirstOrDefault(x => string.Equals(x.MatchId, matchId, StringComparison.OrdinalIgnoreCase));
         }
 
-        public bool UpdateManualTags(string matchId, IReadOnlyCollection<string> manualTags)
+        public bool UpdateManualTags(string matchId, IReadOnlyCollection<string> manualTags, IReadOnlyCollection<string> hiddenAutoTags = null)
         {
             if (string.IsNullOrWhiteSpace(matchId))
                 return false;
@@ -625,6 +626,8 @@ namespace HDTplugins.Services
                             continue;
 
                         snapshot.ManualTags = SanitizeTags(manualTags, 5).ToList();
+                        if (hiddenAutoTags != null)
+                            snapshot.HiddenAutoTags = SanitizeTags(hiddenAutoTags, 5).ToList();
                         lines[i] = _serializer.Serialize(snapshot);
                         changed = true;
                         break;
@@ -751,7 +754,8 @@ namespace HDTplugins.Services
                         .OrderBy(x => x.Turn)
                         .ThenBy(x => x.TavernTier)
                         .ToList(),
-                    ManualTags = new List<string>()
+                    ManualTags = new List<string>(),
+                    HiddenAutoTags = new List<string>()
                 };
                 var businessSnapshot = CreateBusinessSnapshot(snapshot);
                 snapshot.AutoTags = _lineupTagService.Evaluate(businessSnapshot, GetSnapshotVersionDisplayName(businessSnapshot)).ToList();
@@ -796,6 +800,8 @@ namespace HDTplugins.Services
             EnsureLegacyArchiveMigratedToUnknown(archiveDir);
             _activeMatchArchive = target;
             File.WriteAllText(Path.Combine(archiveDir, "label.txt"), string.IsNullOrWhiteSpace(GetArchiveRawVersion(target)) ? (target.DisplayName ?? string.Empty) : GetArchiveRawVersion(target), Encoding.UTF8);
+            if (_activeMatchAccount != null)
+                SetActiveMatchAccount(_activeMatchAccount);
         }
 
         private ArchiveVersionInfo ResolveInitialArchive()
@@ -836,6 +842,154 @@ namespace HDTplugins.Services
                 return samePatch;
 
             return detected;
+        }
+
+        private void RepairArchiveRoutingIfNeeded()
+        {
+            if (string.IsNullOrWhiteSpace(_archivesDir) || !Directory.Exists(_archivesDir))
+                return;
+
+            try
+            {
+                var movedCount = 0;
+                foreach (var archiveDir in Directory.GetDirectories(_archivesDir))
+                {
+                    EnsureLegacyArchiveMigratedToUnknown(archiveDir);
+                    var accountsDir = Path.Combine(archiveDir, "accounts");
+                    if (!Directory.Exists(accountsDir))
+                        continue;
+
+                    foreach (var accountDir in Directory.GetDirectories(accountsDir))
+                    {
+                        var finalFilePath = Path.Combine(accountDir, "bg_stats.jsonl");
+                        if (!File.Exists(finalFilePath))
+                            continue;
+
+                        movedCount += RepairSnapshotFileRouting(finalFilePath, Path.GetFileName(archiveDir), Path.GetFileName(accountDir));
+                    }
+                }
+
+                if (movedCount > 0)
+                    HdtLog.Info($"[BGStats] 已修复错归档对局数: {movedCount}");
+            }
+            catch (Exception ex)
+            {
+                HdtLog.Error("[BGStats] RepairArchiveRoutingIfNeeded 失败: " + ex.Message);
+            }
+        }
+
+        private int RepairSnapshotFileRouting(string finalFilePath, string sourceArchiveKey, string accountKey)
+        {
+            var lines = File.ReadAllLines(finalFilePath, Encoding.UTF8);
+            if (lines.Length == 0)
+                return 0;
+
+            var keptLines = new List<string>(lines.Length);
+            var movedByTarget = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var line in lines)
+            {
+                if (string.IsNullOrWhiteSpace(line))
+                    continue;
+
+                var snapshot = SafeDeserialize(line);
+                if (snapshot == null)
+                {
+                    keptLines.Add(line);
+                    continue;
+                }
+
+                var targetArchive = ResolveArchiveForRecordedSnapshot(snapshot);
+                if (targetArchive == null || string.Equals(targetArchive.Key, sourceArchiveKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    keptLines.Add(line);
+                    continue;
+                }
+
+                if (!movedByTarget.TryGetValue(targetArchive.Key, out var bucket))
+                {
+                    bucket = new List<string>();
+                    movedByTarget[targetArchive.Key] = bucket;
+                }
+
+                bucket.Add(line);
+            }
+
+            if (movedByTarget.Count == 0)
+                return 0;
+
+            File.WriteAllLines(finalFilePath, keptLines, Encoding.UTF8);
+
+            var movedCount = 0;
+            foreach (var pair in movedByTarget)
+            {
+                var targetArchive = ResolveArchiveFromRawVersion(pair.Key, pair.Value.Select(SafeDeserialize).FirstOrDefault()?.GameVersion);
+                var targetArchiveDir = Path.Combine(_archivesDir, pair.Key);
+                Directory.CreateDirectory(targetArchiveDir);
+                File.WriteAllText(
+                    Path.Combine(targetArchiveDir, "label.txt"),
+                    string.IsNullOrWhiteSpace(GetArchiveRawVersion(targetArchive))
+                        ? (targetArchive?.DisplayName ?? string.Empty)
+                        : GetArchiveRawVersion(targetArchive),
+                    Encoding.UTF8);
+
+                var targetFilePath = GetAccountFinalFilePath(targetArchiveDir, accountKey);
+                Directory.CreateDirectory(Path.GetDirectoryName(targetFilePath));
+                var existingMatchIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                if (File.Exists(targetFilePath))
+                {
+                    foreach (var existingLine in File.ReadLines(targetFilePath, Encoding.UTF8))
+                    {
+                        var existing = SafeDeserialize(existingLine);
+                        if (!string.IsNullOrWhiteSpace(existing?.MatchId))
+                            existingMatchIds.Add(existing.MatchId);
+                    }
+                }
+
+                var appendLines = pair.Value
+                    .Where(moveLine =>
+                    {
+                        var moved = SafeDeserialize(moveLine);
+                        return string.IsNullOrWhiteSpace(moved?.MatchId) || existingMatchIds.Add(moved.MatchId);
+                    })
+                    .ToList();
+                if (appendLines.Count == 0)
+                    continue;
+
+                var orderedLines = appendLines
+                    .Select(moveLine => new { Line = moveLine, Snapshot = SafeDeserialize(moveLine) })
+                    .OrderBy(x => ParseTimestamp(x.Snapshot?.Timestamp))
+                    .Select(x => x.Line)
+                    .ToArray();
+                File.AppendAllText(targetFilePath, string.Join(Environment.NewLine, orderedLines) + Environment.NewLine, Encoding.UTF8);
+                movedCount += orderedLines.Length;
+            }
+
+            return movedCount;
+        }
+
+        private ArchiveVersionInfo ResolveArchiveForRecordedSnapshot(BgSnapshot snapshot)
+        {
+            if (snapshot == null)
+                return null;
+
+            var rawVersion = NormalizeText(snapshot.GameVersion);
+            if (string.IsNullOrWhiteSpace(rawVersion))
+                return null;
+
+            return ResolveArchiveFromRawVersion(ArchiveKeyProvider.BuildArchiveKeyFromRawVersion(rawVersion, _versionDisplayService.RememberAndMapVersion(rawVersion)), rawVersion);
+        }
+
+        private ArchiveVersionInfo ResolveArchiveFromRawVersion(string archiveKey, string rawVersion)
+        {
+            var displayName = _versionDisplayService.RememberAndMapVersion(rawVersion);
+            return new ArchiveVersionInfo
+            {
+                Key = string.IsNullOrWhiteSpace(archiveKey) ? ArchiveKeyProvider.BuildArchiveKeyFromRawVersion(rawVersion, displayName) : archiveKey,
+                DisplayName = displayName,
+                RawVersion = rawVersion,
+                PatchVersion = ArchiveKeyProvider.ExtractPatchVersion(rawVersion)
+            };
         }
 
         private IReadOnlyList<BgSnapshot> LoadSnapshots()
@@ -1112,6 +1266,7 @@ namespace HDTplugins.Services
                 .ToList();
             snapshot.AutoTags = SanitizeTags(snapshot.AutoTags, 3).ToList();
             snapshot.ManualTags = SanitizeTags(snapshot.ManualTags, 5).ToList();
+            snapshot.HiddenAutoTags = SanitizeTags(snapshot.HiddenAutoTags, 5).ToList();
 
             if ((snapshot.FinalBoard == null || snapshot.FinalBoard.Count == 0) && snapshot.FinalBoardCardIds.Length > 0)
             {
@@ -1184,7 +1339,8 @@ namespace HDTplugins.Services
                 FinalBoard = (snapshot.FinalBoard ?? new List<BgBoardMinionSnapshot>()).ToList(),
                 TavernUpgradeTimeline = (snapshot.TavernUpgradeTimeline ?? new List<BgTavernUpgradePoint>()).ToList(),
                 AutoTags = (snapshot.AutoTags ?? new List<string>()).ToList(),
-                ManualTags = (snapshot.ManualTags ?? new List<string>()).ToList()
+                ManualTags = (snapshot.ManualTags ?? new List<string>()).ToList(),
+                HiddenAutoTags = (snapshot.HiddenAutoTags ?? new List<string>()).ToList()
             });
         }
 
@@ -1208,8 +1364,11 @@ namespace HDTplugins.Services
                 return Array.Empty<string>();
 
             var result = new List<string>();
+            var hiddenAutoTags = new HashSet<string>(SanitizeTags(snapshot.HiddenAutoTags, 5), StringComparer.OrdinalIgnoreCase);
             foreach (var tag in SanitizeTags(snapshot.AutoTags, 3))
             {
+                if (hiddenAutoTags.Contains(tag))
+                    continue;
                 if (!result.Contains(tag, StringComparer.OrdinalIgnoreCase))
                     result.Add(tag);
             }
