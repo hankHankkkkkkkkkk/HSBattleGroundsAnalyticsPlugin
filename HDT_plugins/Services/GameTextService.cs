@@ -19,14 +19,17 @@ namespace HDTplugins.Services
         private static Locale _currentLocale = Locale.enUS;
         private static bool _initialized;
 
-        public static void Initialize()
+        public static void Initialize(bool warmLocaleImmediately = true)
         {
             if (_initialized)
                 return;
 
             _initialized = true;
             LocalizationService.LanguageChanged += OnLanguageChanged;
-            ApplyCulture(LocalizationService.CurrentCulture);
+            if (warmLocaleImmediately)
+                ApplyCulture(LocalizationService.CurrentCulture);
+            else
+                _currentLocale = ToLocale(LocalizationService.CurrentCulture);
         }
 
         public static void ForceRefreshCurrentLanguage()
