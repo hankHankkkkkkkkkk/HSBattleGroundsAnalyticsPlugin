@@ -3164,7 +3164,8 @@ namespace HDTplugins.Views
 
             foreach (var tag in combinedTags)
             {
-                var removable = (snapshot.ManualTags ?? new List<string>()).Any(x => string.Equals(x, tag, StringComparison.OrdinalIgnoreCase));
+                var removable = (snapshot.ManualTags ?? new List<string>()).Any(x => string.Equals(x, tag, StringComparison.OrdinalIgnoreCase))
+                    || (snapshot.AutoTags ?? new List<string>()).Any(x => string.Equals(x, tag, StringComparison.OrdinalIgnoreCase));
                 host.Children.Add(BuildEditableTag(tag, removable, () => RemoveManualTag(snapshot, tag)));
             }
             return host;
@@ -3279,16 +3280,28 @@ namespace HDTplugins.Views
                 return;
 
             manual.Add(tag);
+            var hiddenAutoTags = (snapshot.HiddenAutoTags ?? new List<string>())
+                .Where(x => !string.Equals(x, tag, StringComparison.OrdinalIgnoreCase))
+                .ToList();
             snapshot.ManualTags = manual;
-            _store.UpdateManualTags(snapshot.MatchId, manual);
+            snapshot.HiddenAutoTags = hiddenAutoTags;
+            _store.UpdateManualTags(snapshot.MatchId, manual, hiddenAutoTags);
             ShowMatchDetails(snapshot.MatchId, false);
         }
 
         private void RemoveManualTag(BgSnapshot snapshot, string tag)
         {
             var manual = (snapshot.ManualTags ?? new List<string>()).Where(x => !string.Equals(x, tag, StringComparison.OrdinalIgnoreCase)).ToList();
+            var hiddenAutoTags = (snapshot.HiddenAutoTags ?? new List<string>()).ToList();
+            if ((snapshot.AutoTags ?? new List<string>()).Any(x => string.Equals(x, tag, StringComparison.OrdinalIgnoreCase))
+                && !hiddenAutoTags.Contains(tag, StringComparer.OrdinalIgnoreCase))
+            {
+                hiddenAutoTags.Add(tag);
+            }
+
             snapshot.ManualTags = manual;
-            _store.UpdateManualTags(snapshot.MatchId, manual);
+            snapshot.HiddenAutoTags = hiddenAutoTags;
+            _store.UpdateManualTags(snapshot.MatchId, manual, hiddenAutoTags);
             ShowMatchDetails(snapshot.MatchId, false);
         }
 
