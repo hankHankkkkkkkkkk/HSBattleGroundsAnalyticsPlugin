@@ -156,6 +156,12 @@
   <data name="Common_None" xml:space="preserve">
     <value>无</value>
   </data>
+  <data name="Common_ImageMissing" xml:space="preserve">
+    <value>资源缺失</value>
+  </data>
+  <data name="Common_Loading" xml:space="preserve">
+    <value>加载中...</value>
+  </data>
   <data name="Common_Todo" xml:space="preserve">
     <value>待开发</value>
   </data>

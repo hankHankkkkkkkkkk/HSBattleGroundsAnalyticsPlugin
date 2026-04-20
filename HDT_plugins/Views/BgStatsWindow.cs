@@ -6,6 +6,8 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Net;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -13,13 +15,43 @@ using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
+using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
+
+using HdtLog = Hearthstone_Deck_Tracker.Utility.Logging.Log;
 
 namespace HDTplugins.Views
 {
     public class BgStatsWindow : Window
     {
+        private sealed class ArtLoadState
+        {
+            public ArtLoadState(Image image, TextBlock fallback, List<string> urls)
+            {
+                Image = image;
+                Fallback = fallback;
+                Urls = urls;
+            }
+
+            public Image Image { get; private set; }
+            public TextBlock Fallback { get; private set; }
+            public List<string> Urls { get; private set; }
+            public int Index { get; set; }
+        }
+
+        private sealed class ArtPreviewEntry
+        {
+            public ArtPreviewEntry(string title, IReadOnlyList<string> urls)
+            {
+                Title = title;
+                Urls = urls ?? Array.Empty<string>();
+            }
+
+            public string Title { get; private set; }
+            public IReadOnlyList<string> Urls { get; private set; }
+        }
+
         private enum SidebarSection
         {
             History,
@@ -100,10 +132,17 @@ namespace HDTplugins.Views
         private readonly Label _dateLabel;
         private readonly Label _summaryText;
         private readonly Border _contentHost;
+        private readonly Grid _contentLayers;
         private readonly StackPanel _historyList;
         private readonly Button _prevDateButton;
         private readonly Button _nextDateButton;
         private ScrollViewer _historyScrollViewer;
+        private ScrollViewer _cachedHistoryScrollViewer;
+        private ScrollViewer _detailScrollViewer;
+        private string _cachedHistorySelectionId;
+        private bool _historyViewCacheValid;
+        private Popup _artPreviewPopup;
+        private readonly Dictionary<string, BitmapImage> _artPreviewImageCache = new Dictionary<string, BitmapImage>(StringComparer.OrdinalIgnoreCase);
         private string _selectedMatchId;
         private SidebarSection _currentSection = SidebarSection.History;
         private HistoryRange _currentRange = HistoryRange.Season;
@@ -149,8 +188,6 @@ namespace HDTplugins.Views
         private static readonly Effect PanelShadowEffect = CreateShadowEffect(18, 0.20, 0, 6);
         private static readonly Effect CardShadowEffect = CreateShadowEffect(12, 0.16, 0, 4);
 
-        public event Action<string> OpenMatchDetailRequested;
-
         public Func<BgMatchRow, string> ResolveAnomalyDisplay { get; set; }
         public Func<BgMatchRow, string> ResolveFinalBoardDisplay { get; set; }
 
@@ -168,6 +205,10 @@ namespace HDTplugins.Views
             Foreground = PrimaryTextBrush;
             FontFamily = new FontFamily("Segoe UI");
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
+            UseLayoutRounding = true;
+            SnapsToDevicePixels = true;
+            TextOptions.SetTextFormattingMode(this, TextFormattingMode.Display);
+            TextOptions.SetTextRenderingMode(this, TextRenderingMode.ClearType);
             ConfigureWindowResources();
 
             _versionButton = new Button();
@@ -178,11 +219,14 @@ namespace HDTplugins.Views
             _dateLabel = new Label();
             _summaryText = new Label();
             _contentHost = new Border();
+            _contentLayers = new Grid();
             _historyList = new StackPanel();
+            ConfigureCrispRendering(_historyList);
             _prevDateButton = CreateToolbarButton("<");
             _nextDateButton = CreateToolbarButton(">");
 
             var root = new Grid { Margin = new Thickness(36, 28, 36, 28) };
+            ConfigureCrispRendering(root);
             root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(160) });
             root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             Content = root;
@@ -213,6 +257,17 @@ namespace HDTplugins.Views
             Resources[typeof(MenuItem)] = CreateMenuItemStyle();
             Resources[typeof(ToolTip)] = CreateToolTipStyle();
             Resources[typeof(ScrollBar)] = CreateScrollBarStyle();
+        }
+
+        private static void ConfigureCrispRendering(FrameworkElement element)
+        {
+            if (element == null)
+                return;
+
+            element.UseLayoutRounding = true;
+            element.SnapsToDevicePixels = true;
+            TextOptions.SetTextFormattingMode(element, TextFormattingMode.Display);
+            TextOptions.SetTextRenderingMode(element, TextRenderingMode.ClearType);
         }
 
         private static Style CreateComboBoxStyle()
@@ -542,6 +597,7 @@ namespace HDTplugins.Views
                 return;
             }
 
+            InvalidateHistoryViewCache();
             RenderHistoryView();
         }
 
@@ -558,6 +614,7 @@ namespace HDTplugins.Views
 
             RefreshVersionButton();
             RefreshHistoryToolbar();
+            InvalidateHistoryViewCache();
             Reload();
         }
 
@@ -573,6 +630,7 @@ namespace HDTplugins.Views
 
         private void OnLanguageChanged(object sender, EventArgs e)
         {
+            InvalidateHistoryViewCache();
             ApplyLocalization(true);
         }
 
@@ -676,26 +734,38 @@ namespace HDTplugins.Views
         private Border BuildMainPanel()
         {
             var border = CreatePanelBorder(MainPanelBackgroundBrush, PanelCornerRadius, new Thickness(24, 22, 24, 22));
+            ConfigureCrispRendering(border);
 
-            var dock = new DockPanel();
-            border.Child = dock;
+            var layout = new Grid();
+            ConfigureCrispRendering(layout);
+            layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            border.Child = layout;
 
             var header = new StackPanel { Orientation = Orientation.Vertical };
-            DockPanel.SetDock(header, Dock.Top);
-            dock.Children.Add(header);
+            ConfigureCrispRendering(header);
+            Grid.SetRow(header, 0);
+            layout.Children.Add(header);
 
             _sectionTitle.Text = Loc.S("HistoryMatches_Title");
             _sectionTitle.FontSize = 22;
             _sectionTitle.FontWeight = FontWeights.SemiBold;
             _sectionTitle.Foreground = PrimaryTextBrush;
             _sectionTitle.Margin = new Thickness(0, 0, 0, 14);
+            ConfigureCrispRendering(_sectionTitle);
             header.Children.Add(_sectionTitle);
 
             ConfigureHistoryToolbar();
             header.Children.Add(_historyToolbar);
 
             _contentHost.Background = Brushes.Transparent;
-            dock.Children.Add(_contentHost);
+            _contentHost.HorizontalAlignment = HorizontalAlignment.Stretch;
+            _contentHost.VerticalAlignment = VerticalAlignment.Stretch;
+            ConfigureCrispRendering(_contentHost);
+            ConfigureCrispRendering(_contentLayers);
+            _contentHost.Child = _contentLayers;
+            Grid.SetRow(_contentHost, 1);
+            layout.Children.Add(_contentHost);
             return border;
         }
 
@@ -795,6 +865,7 @@ namespace HDTplugins.Views
                 _currentRange = range;
                 _anchorDate = DateTime.Today;
                 _selectedMatchId = null;
+                InvalidateHistoryViewCache();
                 RefreshHistoryToolbar();
                 RenderHistoryView();
             };
@@ -823,7 +894,7 @@ namespace HDTplugins.Views
                 _sectionTitle.Text = GetSectionTitle();
                 _historyToolbar.Visibility = string.IsNullOrWhiteSpace(_selectedMatchId) ? Visibility.Visible : Visibility.Collapsed;
                 if (string.IsNullOrWhiteSpace(_selectedMatchId))
-                    RenderHistoryView();
+                    RestoreCachedHistoryView();
                 else
                     ShowMatchDetails(_selectedMatchId, false);
                 return;
@@ -833,7 +904,7 @@ namespace HDTplugins.Views
             {
                 _historyToolbar.Visibility = Visibility.Collapsed;
                 _sectionTitle.Text = GetSectionTitle();
-                _contentHost.Child = BuildSettingsView();
+                ShowLayerContent(BuildSettingsView(), false);
                 return;
             }
 
@@ -841,7 +912,7 @@ namespace HDTplugins.Views
             {
                 _historyToolbar.Visibility = Visibility.Collapsed;
                 _sectionTitle.Text = GetSectionTitle();
-                _contentHost.Child = BuildRaceStatsView();
+                ShowLayerContent(BuildRaceStatsView(), false);
                 return;
             }
 
@@ -849,7 +920,7 @@ namespace HDTplugins.Views
             {
                 _historyToolbar.Visibility = Visibility.Collapsed;
                 _sectionTitle.Text = GetSectionTitle();
-                _contentHost.Child = BuildHeroStatsView();
+                ShowLayerContent(BuildHeroStatsView(), false);
                 return;
             }
 
@@ -857,39 +928,119 @@ namespace HDTplugins.Views
             {
                 _historyToolbar.Visibility = Visibility.Collapsed;
                 _sectionTitle.Text = GetSectionTitle();
-                _contentHost.Child = BuildMatchStatsView();
+                ShowLayerContent(BuildMatchStatsView(), false);
                 return;
             }
 
             _historyToolbar.Visibility = Visibility.Collapsed;
             _sectionTitle.Text = GetSectionTitle();
-            _contentHost.Child = BuildPlaceholder();
+            ShowLayerContent(BuildPlaceholder(), false);
         }
 
         private void RenderHistoryView()
         {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            HdtLog.Info("[BGStats][HistoryRender] start");
             _sectionTitle.Text = Loc.S("HistoryMatches_Title");
             _historyToolbar.Visibility = Visibility.Visible;
             RefreshHistoryToolbar();
+            HdtLog.Info($"[BGStats][HistoryRender] after toolbar elapsed={sw.ElapsedMilliseconds}ms");
             _historyCards.Clear();
+            RemoveLayer(_historyScrollViewer);
             _historyScrollViewer = new ScrollViewer
             {
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch,
                 Content = _historyList
             };
-            _contentHost.Child = _historyScrollViewer;
+            ConfigureCrispRendering(_historyScrollViewer);
+            ShowLayerContent(_historyScrollViewer, true);
+            HdtLog.Info($"[BGStats][HistoryRender] after host swap elapsed={sw.ElapsedMilliseconds}ms");
 
             var rows = FilterRows(_store.LoadMatchRows());
+            HdtLog.Info($"[BGStats][HistoryRender] after load/filter rows={rows.Count} elapsed={sw.ElapsedMilliseconds}ms");
             foreach (var row in rows)
             {
                 row.AnomalyDisplay = ResolveAnomalyDisplay(row) ?? row.AnomalyDisplay;
                 row.FinalBoardDisplay = ResolveFinalBoardDisplay(row) ?? row.FinalBoardDisplay;
             }
+            HdtLog.Info($"[BGStats][HistoryRender] after resolve display elapsed={sw.ElapsedMilliseconds}ms");
 
             RenderHistoryRows(rows);
+            HdtLog.Info($"[BGStats][HistoryRender] after render rows elapsed={sw.ElapsedMilliseconds}ms");
             UpdateSummary(rows);
             RestoreSelectedHistoryCard();
+            _cachedHistoryScrollViewer = _historyScrollViewer;
+            _cachedHistorySelectionId = _selectedMatchId;
+            _historyViewCacheValid = true;
+            HdtLog.Info($"[BGStats][HistoryRender] done elapsed={sw.ElapsedMilliseconds}ms");
+        }
+
+        private bool RestoreCachedHistoryView()
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            HdtLog.Info($"[BGStats][DetailReturn] restore start cacheValid={_historyViewCacheValid} cached={_cachedHistoryScrollViewer != null} selected={_selectedMatchId ?? "null"}");
+            _sectionTitle.Text = Loc.S("HistoryMatches_Title");
+            _historyToolbar.Visibility = Visibility.Visible;
+
+            if (!_historyViewCacheValid || _cachedHistoryScrollViewer == null)
+            {
+                HdtLog.Info($"[BGStats][DetailReturn] cache miss before RenderHistoryView elapsed={sw.ElapsedMilliseconds}ms");
+                RenderHistoryView();
+                HdtLog.Info($"[BGStats][DetailReturn] cache miss after RenderHistoryView elapsed={sw.ElapsedMilliseconds}ms");
+                return false;
+            }
+
+            _historyScrollViewer = _cachedHistoryScrollViewer;
+            var beforeSwap = sw.ElapsedMilliseconds;
+            ShowLayerContent(_historyScrollViewer, true);
+            HdtLog.Info($"[BGStats][DetailReturn] content swapped swapMs={sw.ElapsedMilliseconds - beforeSwap} totalMs={sw.ElapsedMilliseconds}");
+            _selectedMatchId = _cachedHistorySelectionId;
+            return true;
+        }
+
+        private void ShowLayerContent(UIElement content, bool preserveExistingLayers)
+        {
+            if (content == null)
+                return;
+
+            if (!preserveExistingLayers)
+            {
+                _contentLayers.Children.Clear();
+                _detailScrollViewer = null;
+            }
+
+            if (content is FrameworkElement element)
+            {
+                element.HorizontalAlignment = HorizontalAlignment.Stretch;
+                element.VerticalAlignment = VerticalAlignment.Stretch;
+                ConfigureCrispRendering(element);
+            }
+
+            if (!_contentLayers.Children.Contains(content))
+                _contentLayers.Children.Add(content);
+
+            foreach (UIElement child in _contentLayers.Children)
+                child.Visibility = ReferenceEquals(child, content) ? Visibility.Visible : Visibility.Collapsed;
+
+            HdtLog.Info($"[BGStats][Layer] show={content.GetType().Name} preserve={preserveExistingLayers} layers={_contentLayers.Children.Count} host={_contentHost.ActualWidth:F0}x{_contentHost.ActualHeight:F0}");
+        }
+
+        private void RemoveLayer(UIElement content)
+        {
+            if (content == null || _contentLayers == null)
+                return;
+
+            _contentLayers.Children.Remove(content);
+        }
+
+        private void InvalidateHistoryViewCache()
+        {
+            _historyViewCacheValid = false;
+            _cachedHistoryScrollViewer = null;
+            _cachedHistorySelectionId = null;
         }
 
         private UIElement BuildSettingsView()
@@ -1396,7 +1547,7 @@ namespace HDTplugins.Views
                     _raceSortDescending = column != RaceSortColumn.AveragePlacement;
                 }
 
-                _contentHost.Child = BuildRaceStatsView();
+                ShowLayerContent(BuildRaceStatsView(), false);
             };
             Grid.SetColumn(button, columnIndex);
             return button;
@@ -1432,7 +1583,7 @@ namespace HDTplugins.Views
             summaryBorder.MouseLeftButtonUp += delegate
             {
                 _expandedRaceCode = string.Equals(_expandedRaceCode, row.RaceCode, StringComparison.OrdinalIgnoreCase) ? null : row.RaceCode;
-                _contentHost.Child = BuildRaceStatsView();
+                ShowLayerContent(BuildRaceStatsView(), false);
             };
 
             container.Children.Add(summaryBorder);
@@ -1757,7 +1908,7 @@ namespace HDTplugins.Views
                     _heroSortDescending = column != HeroSortColumn.AveragePlacement;
                 }
 
-                _contentHost.Child = BuildHeroStatsView();
+                ShowLayerContent(BuildHeroStatsView(), false);
             };
             Grid.SetColumn(button, columnIndex);
             return button;
@@ -1787,7 +1938,7 @@ namespace HDTplugins.Views
             summaryBorder.MouseLeftButtonUp += delegate
             {
                 _expandedHeroCardId = string.Equals(_expandedHeroCardId, row.HeroCardId, StringComparison.OrdinalIgnoreCase) ? null : row.HeroCardId;
-                _contentHost.Child = BuildHeroStatsView();
+                ShowLayerContent(BuildHeroStatsView(), false);
             };
 
             container.Children.Add(summaryBorder);
@@ -1906,10 +2057,10 @@ namespace HDTplugins.Views
 
         private UIElement BuildMatchStatsView()
         {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            HdtLog.Info($"[BGStats][MatchStats] start page={_currentMatchStatsPage}");
             _settingsService.Reload();
-            var tavernSummary = _store.LoadTavernTempoSummary();
-            var trinketSummary = _store.LoadTrinketStats(_settingsService.Settings.GetNormalizedScoreLine(), _currentTrinketFilter);
-            var timewarpSummary = _store.LoadTimewarpStats(_settingsService.Settings.GetNormalizedScoreLine(), _currentTimewarpFilter);
+            HdtLog.Info($"[BGStats][MatchStats] after settings elapsed={sw.ElapsedMilliseconds}ms");
 
             var scrollViewer = new ScrollViewer
             {
@@ -1922,14 +2073,27 @@ namespace HDTplugins.Views
             root.Children.Add(BuildMatchStatsPageBar(_currentMatchStatsPage == MatchStatsPage.Trinkets ? new Thickness(0, 0, 0, 18) : new Thickness(0, 0, 0, 18)));
 
             if (_currentMatchStatsPage == MatchStatsPage.TavernTempo)
+            {
+                var tavernSummary = _store.LoadTavernTempoSummary();
+                HdtLog.Info($"[BGStats][MatchStats] after tavern summary elapsed={sw.ElapsedMilliseconds}ms");
                 root.Children.Add(BuildTavernTempoView(tavernSummary));
+            }
             else if (_currentMatchStatsPage == MatchStatsPage.Trinkets)
+            {
+                var trinketSummary = _store.LoadTrinketStats(_settingsService.Settings.GetNormalizedScoreLine(), _currentTrinketFilter);
+                HdtLog.Info($"[BGStats][MatchStats] after trinket summary elapsed={sw.ElapsedMilliseconds}ms");
                 root.Children.Add(BuildTrinketStatsView(trinketSummary));
+            }
             else if (_currentMatchStatsPage == MatchStatsPage.Timewarp)
+            {
+                var timewarpSummary = _store.LoadTimewarpStats(_settingsService.Settings.GetNormalizedScoreLine(), _currentTimewarpFilter);
+                HdtLog.Info($"[BGStats][MatchStats] after timewarp summary elapsed={sw.ElapsedMilliseconds}ms");
                 root.Children.Add(BuildTimewarpStatsView(timewarpSummary));
+            }
             else if (_currentMatchStatsPage == MatchStatsPage.Quests)
                 root.Children.Add(BuildQuestStatsPlaceholderView());
 
+            HdtLog.Info($"[BGStats][MatchStats] done elapsed={sw.ElapsedMilliseconds}ms");
             return scrollViewer;
         }
 
@@ -2139,7 +2303,7 @@ namespace HDTplugins.Views
                     _trinketSortDescending = column != TrinketSortColumn.Name && column != TrinketSortColumn.AveragePlacement;
                 }
 
-                _contentHost.Child = BuildMatchStatsView();
+                ShowLayerContent(BuildMatchStatsView(), false);
             };
             Grid.SetColumn(button, columnIndex);
             return button;
@@ -2326,7 +2490,7 @@ namespace HDTplugins.Views
                     _timewarpSortDescending = column != TimewarpSortColumn.Name && column != TimewarpSortColumn.AveragePlacement;
                 }
 
-                _contentHost.Child = BuildMatchStatsView();
+                ShowLayerContent(BuildMatchStatsView(), false);
             };
             Grid.SetColumn(button, columnIndex);
             return button;
@@ -2558,26 +2722,35 @@ namespace HDTplugins.Views
             var topGrid = new Grid();
             topGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             topGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            topGrid.Children.Add(new TextBlock
+            var heroPanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            heroPanel.Children.Add(CreatePlacementBadge(row.Placement));
+            heroPanel.Children.Add(new TextBlock
             {
                 Text = row.HeroName,
                 FontSize = 18,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = LightForegroundBrush,
-                VerticalAlignment = VerticalAlignment.Center
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(10, 0, 0, 0)
             });
+            topGrid.Children.Add(heroPanel);
             var tagsPanel = BuildTagWrapPanel(row.Tags, false);
             Grid.SetColumn(tagsPanel, 1);
             topGrid.Children.Add(tagsPanel);
             stack.Children.Add(topGrid);
 
             stack.Children.Add(BuildHistoryStatsText(row));
+            var shouldShowAnomaly = ShouldShowAnomalyText(row.AnomalyDisplay);
             stack.Children.Add(new TextBlock
             {
                 Margin = new Thickness(0, 6, 0, 0),
-                Foreground = LightForegroundBrush,
+                Foreground = shouldShowAnomaly ? LightForegroundBrush : Brushes.Transparent,
                 FontSize = 13,
-                Text = Loc.F("HistoryMatches_AnomalyFormat", row.AnomalyDisplay)
+                Text = shouldShowAnomaly ? Loc.F("HistoryMatches_AnomalyFormat", row.AnomalyDisplay) : " "
             });
             stack.Children.Add(new TextBlock
             {
@@ -2590,6 +2763,40 @@ namespace HDTplugins.Views
 
             border.MouseLeftButtonUp += delegate { OpenRowDetails(row); };
             return border;
+        }
+
+        private Border CreatePlacementBadge(int placement)
+        {
+            var border = new Border
+            {
+                Width = 44,
+                MinHeight = 28,
+                Background = GetPlacementBrush(placement),
+                CornerRadius = ChipCornerRadius,
+                Padding = new Thickness(8, 4, 8, 4),
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = new TextBlock
+                {
+                    Text = "#" + placement.ToString(CultureInfo.CurrentCulture),
+                    Foreground = Brushes.White,
+                    FontSize = 14,
+                    FontWeight = FontWeights.Bold,
+                    TextAlignment = TextAlignment.Center,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                }
+            };
+            return border;
+        }
+
+        private static bool ShouldShowAnomalyText(string anomalyDisplay)
+        {
+            if (string.IsNullOrWhiteSpace(anomalyDisplay))
+                return false;
+
+            var value = anomalyDisplay.Trim();
+            return !string.Equals(value, Loc.S("Common_Todo"), StringComparison.CurrentCultureIgnoreCase)
+                && !string.Equals(value, Loc.S("Common_None"), StringComparison.CurrentCultureIgnoreCase);
         }
 
         private void UpdateSummary(IReadOnlyList<BgMatchRow> rows)
@@ -2652,6 +2859,7 @@ namespace HDTplugins.Views
                 return;
 
             _anchorDate = nextAnchor.Value;
+            InvalidateHistoryViewCache();
             RefreshHistoryToolbar();
             RenderHistoryView();
         }
@@ -2748,6 +2956,7 @@ namespace HDTplugins.Views
                     {
                         _selectedMatchId = null;
                         _store.SetArchiveByKey(archive.Key);
+                        InvalidateHistoryViewCache();
                         RefreshVersionButton();
                         RefreshHistoryToolbar();
                         RenderHistoryView();
@@ -2786,6 +2995,7 @@ namespace HDTplugins.Views
                         _settingsService.Settings.SelectedAccountKey = _store.CurrentAccountKey;
                         _settingsService.Save();
                         _selectedMatchId = null;
+                        InvalidateHistoryViewCache();
                         RefreshAccountButton();
                         RefreshVersionButton();
                         RefreshHistoryToolbar();
@@ -2831,13 +3041,15 @@ namespace HDTplugins.Views
         private void OpenRowDetails(BgMatchRow row)
         {
             _selectedMatchId = row.MatchId;
-            OpenMatchDetailRequested?.Invoke(row.MatchId);
             ShowMatchDetails(row.MatchId, true);
         }
 
         private void ShowMatchDetails(string matchId, bool scrollToTop)
         {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            HdtLog.Info($"[BGStats][DetailShow] start match={matchId ?? "null"} scrollToTop={scrollToTop}");
             var snapshot = _store.LoadSnapshot(matchId);
+            HdtLog.Info($"[BGStats][DetailShow] after LoadSnapshot hasSnapshot={snapshot != null} elapsed={sw.ElapsedMilliseconds}ms");
             if (snapshot == null)
             {
                 _selectedMatchId = null;
@@ -2854,17 +3066,25 @@ namespace HDTplugins.Views
             {
                 VerticalScrollBarVisibility = ScrollBarVisibility.Visible,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                Height = 520,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch,
                 Content = BuildDetailContent(snapshot)
             };
-            _contentHost.Child = scrollViewer;
+            ConfigureCrispRendering(scrollViewer);
+            HdtLog.Info($"[BGStats][DetailShow] after BuildDetailContent elapsed={sw.ElapsedMilliseconds}ms");
+            RemoveLayer(_detailScrollViewer);
+            _detailScrollViewer = scrollViewer;
+            ShowLayerContent(scrollViewer, true);
+            HdtLog.Info($"[BGStats][DetailShow] after host swap layers={_contentLayers.Children.Count} elapsed={sw.ElapsedMilliseconds}ms");
             if (scrollToTop)
                 scrollViewer.ScrollToTop();
+            HdtLog.Info($"[BGStats][DetailShow] done elapsed={sw.ElapsedMilliseconds}ms");
         }
 
         private UIElement BuildDetailContent(BgSnapshot snapshot)
         {
             var root = new StackPanel();
+            ConfigureCrispRendering(root);
             root.Children.Add(BuildDetailHeader(snapshot));
             root.Children.Add(BuildHeroSection(snapshot));
             if (_store.ShouldShowTrinketDetails(snapshot))
@@ -2896,11 +3116,11 @@ namespace HDTplugins.Views
             };
             backButton.Click += delegate
             {
-                var selected = _selectedMatchId;
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                HdtLog.Info($"[BGStats][DetailReturn] click start selected={_selectedMatchId ?? "null"}");
                 _selectedMatchId = null;
-                RenderHistoryView();
-                _selectedMatchId = selected;
-                RestoreSelectedHistoryCard();
+                RestoreCachedHistoryView();
+                HdtLog.Info($"[BGStats][DetailReturn] click done elapsed={sw.ElapsedMilliseconds}ms");
             };
             grid.Children.Add(backButton);
 
@@ -2942,7 +3162,16 @@ namespace HDTplugins.Views
             };
             section.Child = row;
 
-            row.Children.Add(CreateInfoText(Loc.F("MatchDetail_SelectedHeroFormat", GameTextService.GetCardName(snapshot.HeroCardId, snapshot.HeroName))));
+            var heroCardId = string.IsNullOrWhiteSpace(snapshot.HeroSkinCardId) ? snapshot.HeroCardId : snapshot.HeroSkinCardId;
+            var initialHeroPowerCardId = (snapshot.InitialHeroPowerCardIds ?? Array.Empty<string>()).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x))
+                ?? snapshot.InitialHeroPowerCardId;
+            var selectedHeroText = CreateInfoText(Loc.F("MatchDetail_SelectedHeroFormat", GameTextService.GetCardName(snapshot.HeroCardId, snapshot.HeroName)));
+            AttachArtPreview(selectedHeroText,
+                new ArtPreviewEntry(GameTextService.GetCardName(snapshot.HeroCardId, snapshot.HeroName), CardArtService.GetHeroPreviewUrls(heroCardId, snapshot.HeroCardId)),
+                string.IsNullOrWhiteSpace(initialHeroPowerCardId)
+                    ? null
+                    : new ArtPreviewEntry(GameTextService.GetCardName(initialHeroPowerCardId, initialHeroPowerCardId), CardArtService.GetCardPreviewUrls(initialHeroPowerCardId)));
+            row.Children.Add(selectedHeroText);
             var combatHeroPowers = (snapshot.HeroPowerCardIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).ToArray();
             if (combatHeroPowers.Length > 0)
             {
@@ -2957,14 +3186,14 @@ namespace HDTplugins.Views
                 });
 
                 foreach (var heroPowerCardId in combatHeroPowers)
-                    row.Children.Add(CreateHeroPowerBadge(GameTextService.GetCardName(heroPowerCardId, heroPowerCardId)));
+                    row.Children.Add(CreateHeroPowerBadge(heroPowerCardId, GameTextService.GetCardName(heroPowerCardId, heroPowerCardId)));
             }
             return section;
         }
 
-        private Border CreateHeroPowerBadge(string text)
+        private Border CreateHeroPowerBadge(string cardId, string text)
         {
-            return new Border
+            var border = new Border
             {
                 Background = new SolidColorBrush(Color.FromRgb(124, 154, 201)),
                 CornerRadius = new CornerRadius(4),
@@ -2979,6 +3208,8 @@ namespace HDTplugins.Views
                     VerticalAlignment = VerticalAlignment.Center
                 }
             };
+            AttachArtPreview(border, new ArtPreviewEntry(text, CardArtService.GetCardPreviewUrls(cardId)));
+            return border;
         }
 
         private UIElement BuildTrinketDetailSection(BgSnapshot snapshot)
@@ -2994,14 +3225,14 @@ namespace HDTplugins.Views
                 Foreground = PrimaryTextBrush,
                 Margin = new Thickness(0, 0, 0, 12)
             });
-            stack.Children.Add(BuildDetailInfoRow(Loc.S("MatchDetail_LesserTrinketLabel"), ResolveTrinketName(snapshot.LesserTrinketCardId)));
-            stack.Children.Add(BuildDetailInfoRow(Loc.S("MatchDetail_GreaterTrinketLabel"), ResolveTrinketName(snapshot.GreaterTrinketCardId)));
+            stack.Children.Add(BuildDetailInfoRow(Loc.S("MatchDetail_LesserTrinketLabel"), ResolveTrinketName(snapshot.LesserTrinketCardId), snapshot.LesserTrinketCardId));
+            stack.Children.Add(BuildDetailInfoRow(Loc.S("MatchDetail_GreaterTrinketLabel"), ResolveTrinketName(snapshot.GreaterTrinketCardId), snapshot.GreaterTrinketCardId));
             if (!string.IsNullOrWhiteSpace(snapshot.HeroPowerTrinketCardId))
-                stack.Children.Add(BuildDetailInfoRow(Loc.S("MatchDetail_HeroPowerTrinketLabel"), ResolveTrinketName(snapshot.HeroPowerTrinketCardId)));
+                stack.Children.Add(BuildDetailInfoRow(Loc.S("MatchDetail_HeroPowerTrinketLabel"), ResolveTrinketName(snapshot.HeroPowerTrinketCardId), snapshot.HeroPowerTrinketCardId));
             return section;
         }
 
-        private UIElement BuildDetailInfoRow(string label, string value)
+        private UIElement BuildDetailInfoRow(string label, string value, string cardId = null)
         {
             var grid = new Grid { Margin = new Thickness(0, 0, 0, 8) };
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(180) });
@@ -3022,6 +3253,8 @@ namespace HDTplugins.Views
             };
             Grid.SetColumn(valueBlock, 1);
             grid.Children.Add(valueBlock);
+            if (!string.IsNullOrWhiteSpace(cardId))
+                AttachArtPreview(grid, new ArtPreviewEntry(value, CardArtService.GetCardPreviewUrls(cardId)));
             return grid;
         }
 
@@ -3030,6 +3263,224 @@ namespace HDTplugins.Views
             return string.IsNullOrWhiteSpace(cardId)
                 ? Loc.S("Common_None")
                 : GameTextService.GetCardName(cardId, cardId);
+        }
+
+        private void AttachArtPreview(FrameworkElement target, ArtPreviewEntry primary, ArtPreviewEntry secondary = null, object extraContent = null)
+        {
+            if (target == null)
+                return;
+
+            target.MouseEnter += delegate
+            {
+                ShowArtPreviewPopup(target, primary, secondary, extraContent);
+            };
+            target.MouseLeave += delegate
+            {
+                HideArtPreviewPopup();
+            };
+            target.Unloaded += delegate
+            {
+                HideArtPreviewPopup();
+            };
+        }
+
+        private void ShowArtPreviewPopup(FrameworkElement target, ArtPreviewEntry primary, ArtPreviewEntry secondary, object extraContent)
+        {
+            if (target == null)
+                return;
+
+            HideArtPreviewPopup();
+            _artPreviewPopup = new Popup
+            {
+                AllowsTransparency = true,
+                Placement = PlacementMode.MousePoint,
+                PlacementTarget = target,
+                StaysOpen = true,
+                Child = CreateArtPreviewPopupContent(primary, secondary, extraContent)
+            };
+            _artPreviewPopup.IsOpen = true;
+        }
+
+        private void HideArtPreviewPopup()
+        {
+            if (_artPreviewPopup == null)
+                return;
+
+            _artPreviewPopup.IsOpen = false;
+            _artPreviewPopup.Child = null;
+            _artPreviewPopup = null;
+        }
+
+        private UIElement CreateArtPreviewPopupContent(ArtPreviewEntry primary, ArtPreviewEntry secondary, object extraContent)
+        {
+            var border = CreateCardBorder(SurfaceBrush, new Thickness(12), new Thickness(12, 8, 0, 0));
+            border.BorderBrush = BorderStrongBrush;
+            border.Effect = CardShadowEffect;
+            border.Child = CreateArtPreviewContent(primary, secondary, extraContent);
+            return border;
+        }
+
+        private UIElement CreateArtPreviewContent(ArtPreviewEntry primary, ArtPreviewEntry secondary, object extraContent)
+        {
+            var stack = new StackPanel { MaxWidth = 420 };
+            if (primary != null)
+                stack.Children.Add(CreateArtPreviewBlock(primary));
+            if (secondary != null)
+                stack.Children.Add(CreateArtPreviewBlock(secondary, new Thickness(0, 12, 0, 0)));
+            if (extraContent != null)
+            {
+                stack.Children.Add(new TextBlock
+                {
+                    Text = extraContent.ToString(),
+                    Foreground = PrimaryTextBrush,
+                    FontSize = 12,
+                    Margin = new Thickness(0, 12, 0, 0),
+                    TextWrapping = TextWrapping.Wrap
+                });
+            }
+            return stack;
+        }
+
+        private UIElement CreateArtPreviewBlock(ArtPreviewEntry entry, Thickness? margin = null)
+        {
+            var stack = new StackPanel { Margin = margin ?? new Thickness(0) };
+            stack.Children.Add(new TextBlock
+            {
+                Text = SafeText(entry.Title, "-"),
+                Foreground = PrimaryTextBrush,
+                FontSize = 14,
+                FontWeight = FontWeights.SemiBold,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 8)
+            });
+            stack.Children.Add(CreateArtPreviewImage(entry.Urls));
+            return stack;
+        }
+
+        private Border CreateArtPreviewImage(IReadOnlyList<string> artUrls)
+        {
+            var border = new Border
+            {
+                Width = 256,
+                Height = 360,
+                Background = SurfaceBrush,
+                BorderBrush = BorderSubtleBrush,
+                BorderThickness = DefaultBorderThickness,
+                CornerRadius = SmallCornerRadius,
+                ClipToBounds = true
+            };
+
+            var grid = new Grid();
+            var image = new Image
+            {
+                Stretch = Stretch.Uniform,
+                Visibility = Visibility.Collapsed
+            };
+            var fallback = new TextBlock
+            {
+                Text = Loc.S("Common_ImageMissing"),
+                Foreground = MutedTextBrush,
+                FontSize = 14,
+                FontWeight = FontWeights.SemiBold,
+                TextAlignment = TextAlignment.Center,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(10),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            grid.Children.Add(image);
+            grid.Children.Add(fallback);
+            border.Child = grid;
+
+            var state = new ArtLoadState(
+                image,
+                fallback,
+                (artUrls ?? Array.Empty<string>())
+                    .Where(url => !string.IsNullOrWhiteSpace(url))
+                    .Select(url => url.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList());
+            image.Tag = state;
+
+            if (state.Urls.Count > 0)
+            {
+                fallback.Text = Loc.S("Common_Loading");
+                LoadArtPreviewImageAsync(state, 0);
+            }
+
+            return border;
+        }
+
+        private async void LoadArtPreviewImageAsync(ArtLoadState state, int index)
+        {
+            if (state == null)
+                return;
+
+            if (index >= state.Urls.Count)
+            {
+                state.Image.Visibility = Visibility.Collapsed;
+                state.Fallback.Text = Loc.S("Common_ImageMissing");
+                state.Fallback.Visibility = Visibility.Visible;
+                return;
+            }
+
+            state.Index = index;
+            var url = state.Urls[index];
+            try
+            {
+                var bitmap = await GetArtPreviewBitmapAsync(url);
+                if (!ReferenceEquals(state.Image.Tag, state))
+                    return;
+
+                state.Fallback.Visibility = Visibility.Collapsed;
+                state.Image.Visibility = Visibility.Visible;
+                state.Image.Source = bitmap;
+            }
+            catch
+            {
+                LoadArtPreviewImageAsync(state, index + 1);
+            }
+        }
+
+        private async Task<BitmapImage> GetArtPreviewBitmapAsync(string url)
+        {
+            if (_artPreviewImageCache.TryGetValue(url, out var cached))
+                return cached;
+
+            byte[] data;
+            using (var client = new WebClient())
+            {
+                data = await client.DownloadDataTaskAsync(url);
+            }
+
+            var bitmap = CreateBitmapImage(data);
+            _artPreviewImageCache[url] = bitmap;
+            return bitmap;
+        }
+
+        private static BitmapImage CreateBitmapImage(byte[] data)
+        {
+            using (var stream = new System.IO.MemoryStream(data))
+            {
+                var bitmap = new BitmapImage();
+                bitmap.BeginInit();
+                bitmap.CacheOption = BitmapCacheOption.OnLoad;
+                bitmap.StreamSource = stream;
+                bitmap.EndInit();
+                bitmap.Freeze();
+                return bitmap;
+            }
+        }
+
+        private static BitmapImage CreateBitmapImage(Uri uri)
+        {
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.UriSource = uri;
+            bitmap.CacheOption = BitmapCacheOption.OnDemand;
+            bitmap.EndInit();
+            return bitmap;
         }
 
         private TextBlock CreateInfoText(string text)
@@ -3077,7 +3528,10 @@ namespace HDTplugins.Views
         {
             var border = CreateCardBorder(SurfaceAltBrush, new Thickness(10), new Thickness(8, 0, 8, 0));
             border.MinHeight = 116;
-            border.ToolTip = BuildMinionToolTip(minion);
+            AttachArtPreview(border,
+                new ArtPreviewEntry(ResolveMinionName(minion), CardArtService.GetMinionPreviewUrls(minion.CardId, minion.IsGolden)),
+                null,
+                BuildMinionToolTip(minion));
             var stack = new StackPanel();
             border.Child = stack;
             var minionName = ResolveMinionName(minion);
@@ -3286,6 +3740,7 @@ namespace HDTplugins.Views
             snapshot.ManualTags = manual;
             snapshot.HiddenAutoTags = hiddenAutoTags;
             _store.UpdateManualTags(snapshot.MatchId, manual, hiddenAutoTags);
+            InvalidateHistoryViewCache();
             ShowMatchDetails(snapshot.MatchId, false);
         }
 
@@ -3302,6 +3757,7 @@ namespace HDTplugins.Views
             snapshot.ManualTags = manual;
             snapshot.HiddenAutoTags = hiddenAutoTags;
             _store.UpdateManualTags(snapshot.MatchId, manual, hiddenAutoTags);
+            InvalidateHistoryViewCache();
             ShowMatchDetails(snapshot.MatchId, false);
         }
 
@@ -3455,8 +3911,6 @@ namespace HDTplugins.Views
                 TextWrapping = TextWrapping.Wrap
             };
             AppendLabelValue(block.Inlines, Loc.S("Common_TimeLabel"), row.TimestampText, LightForegroundBrush);
-            AppendSpacer(block.Inlines);
-            AppendLabelValue(block.Inlines, Loc.S("Common_PlacementLabel"), row.Placement.ToString(CultureInfo.CurrentCulture), GetPlacementBrush(row.Placement));
             AppendSpacer(block.Inlines);
             AppendLabelValue(block.Inlines, Loc.S("Common_RatingLabel"), row.RatingAfter.ToString(CultureInfo.CurrentCulture), LightForegroundBrush);
             AppendSpacer(block.Inlines);

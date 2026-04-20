@@ -90,6 +90,7 @@
     <Compile Include="Services\TavernTempoAggregationService.cs" />
     <Compile Include="Services\GameTextService.cs" />
     <Compile Include="Services\HeroIdNormalizer.cs" />
+    <Compile Include="Services\CardArtService.cs" />
     <Compile Include="Services\Log.cs" />
     <Compile Include="Services\LineupTagService.cs" />
     <Compile Include="Services\PluginUpdateService.cs" />

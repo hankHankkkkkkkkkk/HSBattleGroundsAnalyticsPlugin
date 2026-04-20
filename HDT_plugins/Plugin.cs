@@ -167,11 +167,6 @@ namespace HDTplugins
             _draftOverlayService?.Hide();
         }
 
-        private void OnOpenMatchDetailRequested(string matchId)
-        {
-            HdtLog.Info($"[BGStats] 请求打开对局详情 matchId={matchId}");
-        }
-
         private void ShowWindowAsync()
         {
             Application.Current?.Dispatcher?.BeginInvoke(DispatcherPriority.Background, new Action(ShowWindow));
@@ -182,7 +177,6 @@ namespace HDTplugins
             if (_statsWindow == null)
             {
                 _statsWindow = new BgStatsWindow(_store, _settingsService);
-                _statsWindow.OpenMatchDetailRequested += OnOpenMatchDetailRequested;
                 _statsWindow.Closed += (_, __) => _statsWindow = null;
             }
 
