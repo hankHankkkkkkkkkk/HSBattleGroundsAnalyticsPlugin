@@ -51,6 +51,12 @@
   <data name="Common_None" xml:space="preserve">
     <value>None</value>
   </data>
+  <data name="Common_ImageMissing" xml:space="preserve">
+    <value>Image missing</value>
+  </data>
+  <data name="Common_Loading" xml:space="preserve">
+    <value>Loading...</value>
+  </data>
   <data name="Common_Todo" xml:space="preserve">
     <value>Coming soon</value>
   </data>
