@@ -30,6 +30,6 @@ using System.Resources;
 //      生成号
 //      修订号
 //
-[assembly: AssemblyVersion("1.3.4")]
-[assembly: AssemblyFileVersion("1.3.4")]
+[assembly: AssemblyVersion("2.1.1")]
+[assembly: AssemblyFileVersion("2.1.1")]
 [assembly: NeutralResourcesLanguage("en-US", UltimateResourceFallbackLocation.MainAssembly)]

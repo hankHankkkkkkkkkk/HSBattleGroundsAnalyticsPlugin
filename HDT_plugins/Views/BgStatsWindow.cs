@@ -52,6 +52,14 @@ namespace HDTplugins.Views
             public IReadOnlyList<string> Urls { get; private set; }
         }
 
+        private sealed class MatchStatsLoadResult
+        {
+            public MatchStatsPage Page { get; set; }
+            public TavernTempoSummary TavernSummary { get; set; }
+            public TrinketStatsSummary TrinketSummary { get; set; }
+            public TimewarpStatsSummary TimewarpSummary { get; set; }
+        }
+
         private enum SidebarSection
         {
             History,
@@ -139,8 +147,23 @@ namespace HDTplugins.Views
         private ScrollViewer _historyScrollViewer;
         private ScrollViewer _cachedHistoryScrollViewer;
         private ScrollViewer _detailScrollViewer;
+        private ScrollViewer _matchStatsScrollViewer;
+        private StackPanel _matchStatsRoot;
+        private StackPanel _matchStatsBody;
+        private StackPanel _trinketRowsHost;
+        private StackPanel _timewarpRowsHost;
+        private UIElement _trinketStatsShell;
+        private UIElement _timewarpStatsShell;
         private string _cachedHistorySelectionId;
         private bool _historyViewCacheValid;
+        private IReadOnlyList<BgMatchRow> _historyVisibleRows = Array.Empty<BgMatchRow>();
+        private int _historyRenderedRowCount;
+        private bool _historyAppendScheduled;
+        private readonly Dictionary<MatchStatsPage, Button> _matchStatsPageButtons = new Dictionary<MatchStatsPage, Button>();
+        private readonly Dictionary<TrinketFilter, Button> _trinketFilterButtons = new Dictionary<TrinketFilter, Button>();
+        private readonly Dictionary<TimewarpFilter, Button> _timewarpFilterButtons = new Dictionary<TimewarpFilter, Button>();
+        private readonly Dictionary<string, UIElement> _matchStatsUiCache = new Dictionary<string, UIElement>(StringComparer.OrdinalIgnoreCase);
+        private readonly Queue<string> _matchStatsUiCacheOrder = new Queue<string>();
         private Popup _artPreviewPopup;
         private readonly Dictionary<string, BitmapImage> _artPreviewImageCache = new Dictionary<string, BitmapImage>(StringComparer.OrdinalIgnoreCase);
         private string _selectedMatchId;
@@ -161,6 +184,10 @@ namespace HDTplugins.Views
         private TimewarpSortColumn _timewarpSortColumn = TimewarpSortColumn.AppearanceRate;
         private bool _timewarpSortDescending = true;
         private DateTime _anchorDate = DateTime.Today;
+        private int _contentLoadVersion;
+        private int _historyRenderVersion;
+        private const int HistoryPageSize = 20;
+        private const int MatchStatsUiCacheLimit = 16;
         private static readonly Brush WindowBackgroundBrush = CreateBrush(32, 34, 38);
         private static readonly Brush SidebarBackgroundBrush = CreateBrush(43, 46, 52);
         private static readonly Brush SidebarBorderBrush = CreateBrush(68, 72, 79);
@@ -555,6 +582,35 @@ namespace HDTplugins.Views
             };
         }
 
+        private static Border CreateHistoryCardBorder(Brush background, Thickness padding, Thickness? margin = null)
+        {
+            // History can render hundreds of cards. DropShadowEffect is expensive in long WPF lists, so
+            // keep the same border geometry while avoiding per-row bitmap effects on the hot path.
+            return new Border
+            {
+                Background = background,
+                BorderBrush = BorderSubtleBrush,
+                BorderThickness = DefaultBorderThickness,
+                CornerRadius = CardCornerRadius,
+                Padding = padding,
+                Margin = margin ?? new Thickness(0)
+            };
+        }
+
+        private static Border CreateListRowBorder(Brush background, Thickness padding, Thickness? margin = null)
+        {
+            // Repeated statistics rows need cheap layout/rendering more than per-row shadow depth.
+            return new Border
+            {
+                Background = background,
+                BorderBrush = BorderSubtleBrush,
+                BorderThickness = DefaultBorderThickness,
+                CornerRadius = CardCornerRadius,
+                Padding = padding,
+                Margin = margin ?? new Thickness(0)
+            };
+        }
+
         private static void StyleSummaryLabel(Label label)
         {
             label.Background = SurfaceAltBrush;
@@ -601,6 +657,15 @@ namespace HDTplugins.Views
             RenderHistoryView();
         }
 
+        public void BeginInitialHistoryLoad()
+        {
+            _selectedMatchId = null;
+            _currentSection = SidebarSection.History;
+            RefreshSectionButtons();
+            InvalidateHistoryViewCache();
+            RenderHistoryView();
+        }
+
         public void SyncVersionSelection(string archiveKey)
         {
             if (!string.IsNullOrWhiteSpace(archiveKey))
@@ -615,11 +680,13 @@ namespace HDTplugins.Views
             RefreshVersionButton();
             RefreshHistoryToolbar();
             InvalidateHistoryViewCache();
+            ClearMatchStatsUiCache("version-sync");
             Reload();
         }
 
         public void ShowSettings()
         {
+            _contentLoadVersion++;
             _settingsService.Reload();
             _selectedMatchId = null;
             _currentSettingsPage = SettingsPage.Main;
@@ -630,7 +697,9 @@ namespace HDTplugins.Views
 
         private void OnLanguageChanged(object sender, EventArgs e)
         {
+            _store.InvalidateCaches();
             InvalidateHistoryViewCache();
+            InvalidateMatchStatsShell();
             ApplyLocalization(true);
         }
 
@@ -902,6 +971,7 @@ namespace HDTplugins.Views
 
             if (_currentSection == SidebarSection.Settings)
             {
+                _contentLoadVersion++;
                 _historyToolbar.Visibility = Visibility.Collapsed;
                 _sectionTitle.Text = GetSectionTitle();
                 ShowLayerContent(BuildSettingsView(), false);
@@ -912,7 +982,7 @@ namespace HDTplugins.Views
             {
                 _historyToolbar.Visibility = Visibility.Collapsed;
                 _sectionTitle.Text = GetSectionTitle();
-                ShowLayerContent(BuildRaceStatsView(), false);
+                BeginLoadRaceStatsView();
                 return;
             }
 
@@ -920,7 +990,7 @@ namespace HDTplugins.Views
             {
                 _historyToolbar.Visibility = Visibility.Collapsed;
                 _sectionTitle.Text = GetSectionTitle();
-                ShowLayerContent(BuildHeroStatsView(), false);
+                BeginLoadHeroStatsView();
                 return;
             }
 
@@ -928,7 +998,7 @@ namespace HDTplugins.Views
             {
                 _historyToolbar.Visibility = Visibility.Collapsed;
                 _sectionTitle.Text = GetSectionTitle();
-                ShowLayerContent(BuildMatchStatsView(), false);
+                BeginLoadMatchStatsView();
                 return;
             }
 
@@ -937,14 +1007,53 @@ namespace HDTplugins.Views
             ShowLayerContent(BuildPlaceholder(), false);
         }
 
-        private void RenderHistoryView()
+        private async void RenderHistoryView()
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
+            var loadVersion = ++_contentLoadVersion;
             HdtLog.Info("[BGStats][HistoryRender] start");
             _sectionTitle.Text = Loc.S("HistoryMatches_Title");
             _historyToolbar.Visibility = Visibility.Visible;
+            _settingsService.Reload();
+            var preferredAccount = _settingsService.Settings.SelectedAccountKey;
+            if (_store.TryGetCachedMatchRows(out var cachedRows))
+            {
+                HdtLog.Info($"[BGStats][Perf][HistoryRender] matchRowsCache=hit rows={cachedRows.Count} elapsed={sw.ElapsedMilliseconds}ms");
+                RenderHistoryRowsFromSource(cachedRows, sw);
+                return;
+            }
+
+            HdtLog.Info($"[BGStats][Perf][HistoryRender] matchRowsCache=miss elapsed={sw.ElapsedMilliseconds}ms");
+            ShowLayerContent(BuildLoadingView(), false);
+            IReadOnlyList<BgMatchRow> allRows;
+            try
+            {
+                var loadStart = sw.ElapsedMilliseconds;
+                allRows = await Task.Run(() =>
+                {
+                    _store.EnsureSelectedAccountInitialized(preferredAccount);
+                    return _store.LoadMatchRows();
+                });
+                HdtLog.Info($"[BGStats][Perf][HistoryRender] asyncLoad rows={allRows.Count} stepMs={sw.ElapsedMilliseconds - loadStart} elapsed={sw.ElapsedMilliseconds}ms");
+            }
+            catch (Exception ex)
+            {
+                HdtLog.Error("[BGStats][HistoryRender] load failed: " + ex.Message);
+                if (loadVersion == _contentLoadVersion)
+                    ShowLayerContent(BuildErrorView(ex.Message), false);
+                return;
+            }
+
+            if (loadVersion != _contentLoadVersion)
+                return;
+
+            RenderHistoryRowsFromSource(allRows, sw);
+        }
+
+        private void RenderHistoryRowsFromSource(IReadOnlyList<BgMatchRow> allRows, System.Diagnostics.Stopwatch sw)
+        {
             RefreshHistoryToolbar();
-            HdtLog.Info($"[BGStats][HistoryRender] after toolbar elapsed={sw.ElapsedMilliseconds}ms");
+            HdtLog.Info($"[BGStats][HistoryRender] after async load/toolbar elapsed={sw.ElapsedMilliseconds}ms");
             _historyCards.Clear();
             RemoveLayer(_historyScrollViewer);
             _historyScrollViewer = new ScrollViewer
@@ -955,19 +1064,14 @@ namespace HDTplugins.Views
                 VerticalAlignment = VerticalAlignment.Stretch,
                 Content = _historyList
             };
+            _historyScrollViewer.ScrollChanged += OnHistoryScrollChanged;
             ConfigureCrispRendering(_historyScrollViewer);
             ShowLayerContent(_historyScrollViewer, true);
             HdtLog.Info($"[BGStats][HistoryRender] after host swap elapsed={sw.ElapsedMilliseconds}ms");
 
-            var rows = FilterRows(_store.LoadMatchRows());
+            var rows = FilterRows(allRows);
             HdtLog.Info($"[BGStats][HistoryRender] after load/filter rows={rows.Count} elapsed={sw.ElapsedMilliseconds}ms");
-            foreach (var row in rows)
-            {
-                row.AnomalyDisplay = ResolveAnomalyDisplay(row) ?? row.AnomalyDisplay;
-                row.FinalBoardDisplay = ResolveFinalBoardDisplay(row) ?? row.FinalBoardDisplay;
-            }
-            HdtLog.Info($"[BGStats][HistoryRender] after resolve display elapsed={sw.ElapsedMilliseconds}ms");
-
+            HdtLog.Info($"[BGStats][Perf][HistoryRender] filter input={allRows?.Count ?? 0} output={rows.Count} elapsed={sw.ElapsedMilliseconds}ms");
             RenderHistoryRows(rows);
             HdtLog.Info($"[BGStats][HistoryRender] after render rows elapsed={sw.ElapsedMilliseconds}ms");
             UpdateSummary(rows);
@@ -1036,11 +1140,127 @@ namespace HDTplugins.Views
             _contentLayers.Children.Remove(content);
         }
 
+        private UIElement BuildLoadingView()
+        {
+            var container = new Grid();
+            var stack = new StackPanel
+            {
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Width = 320
+            };
+            container.Children.Add(stack);
+
+            var bar = new ProgressBar
+            {
+                IsIndeterminate = true,
+                Height = 8,
+                Margin = new Thickness(0, 0, 0, 18),
+                Foreground = AccentBrush,
+                Background = SurfaceAltBrush
+            };
+            stack.Children.Add(bar);
+
+            stack.Children.Add(new TextBlock
+            {
+                Text = Loc.S("Common_Loading"),
+                Foreground = SecondaryTextBrush,
+                FontSize = 16,
+                FontWeight = FontWeights.SemiBold,
+                TextAlignment = TextAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center
+            });
+
+            return container;
+        }
+
+        private UIElement BuildErrorView(string message)
+        {
+            return new TextBlock
+            {
+                Text = string.IsNullOrWhiteSpace(message) ? Loc.S("Common_NoData") : message,
+                Foreground = NegativeValueBrush,
+                FontSize = 15,
+                TextWrapping = TextWrapping.Wrap,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(24)
+            };
+        }
+
         private void InvalidateHistoryViewCache()
         {
             _historyViewCacheValid = false;
             _cachedHistoryScrollViewer = null;
             _cachedHistorySelectionId = null;
+            _historyVisibleRows = Array.Empty<BgMatchRow>();
+            _historyRenderedRowCount = 0;
+            _historyAppendScheduled = false;
+        }
+
+        private void InvalidateMatchStatsShell()
+        {
+            _matchStatsScrollViewer = null;
+            _matchStatsRoot = null;
+            _matchStatsBody = null;
+            _trinketRowsHost = null;
+            _timewarpRowsHost = null;
+            _trinketStatsShell = null;
+            _timewarpStatsShell = null;
+            _matchStatsPageButtons.Clear();
+            _trinketFilterButtons.Clear();
+            _timewarpFilterButtons.Clear();
+            ClearMatchStatsUiCache("shell");
+        }
+
+        private void ClearMatchStatsUiCache(string reason)
+        {
+            if (_matchStatsUiCache.Count == 0)
+                return;
+
+            var count = _matchStatsUiCache.Count;
+            _matchStatsUiCache.Clear();
+            _matchStatsUiCacheOrder.Clear();
+            HdtLog.Info($"[BGStats][Perf][MatchStatsUI] cacheClear reason={reason ?? "unknown"} count={count}");
+        }
+
+        private string BuildMatchStatsUiCacheKey(string part, string variant = null)
+        {
+            return string.Join("|", new[]
+            {
+                part ?? string.Empty,
+                _store.CurrentAccountKey ?? string.Empty,
+                _store.SelectedArchiveKey ?? string.Empty,
+                LocalizationService.CurrentCulture?.Name ?? string.Empty,
+                _settingsService.Settings.GetNormalizedScoreLine().ToString("F1", CultureInfo.InvariantCulture),
+                _store.CacheVersion.ToString(CultureInfo.InvariantCulture),
+                variant ?? string.Empty
+            });
+        }
+
+        private bool TryGetCachedMatchStatsUi(string key, out UIElement content)
+        {
+            var hit = _matchStatsUiCache.TryGetValue(key ?? string.Empty, out content);
+            HdtLog.Info($"[BGStats][Perf][MatchStatsUI] cache={(hit ? "hit" : "miss")} key={key ?? "null"} size={_matchStatsUiCache.Count}");
+            return hit;
+        }
+
+        private void CacheMatchStatsUi(string key, UIElement content)
+        {
+            if (string.IsNullOrWhiteSpace(key) || content == null)
+                return;
+
+            if (!_matchStatsUiCache.ContainsKey(key))
+                _matchStatsUiCacheOrder.Enqueue(key);
+
+            _matchStatsUiCache[key] = content;
+            while (_matchStatsUiCache.Count > MatchStatsUiCacheLimit && _matchStatsUiCacheOrder.Count > 0)
+            {
+                var oldestKey = _matchStatsUiCacheOrder.Dequeue();
+                _matchStatsUiCache.Remove(oldestKey);
+            }
+
+            HdtLog.Info($"[BGStats][Perf][MatchStatsUI] cacheStore key={key} size={_matchStatsUiCache.Count}");
         }
 
         private UIElement BuildSettingsView()
@@ -1224,6 +1444,8 @@ namespace HDTplugins.Views
                 _settingsService.Settings.AutoOpenOnStartup = autoOpenOnStartup.Value;
 
             _settingsService.Save();
+            _store.InvalidateCaches();
+            ClearMatchStatsUiCache("settings");
             LoadHeroSortPreference();
 
             if (applyLanguage)
@@ -1433,8 +1655,12 @@ namespace HDTplugins.Views
         private UIElement BuildRaceStatsView()
         {
             _settingsService.Reload();
-            var rows = SortRaceRows(_store.LoadRaceStats(_settingsService.Settings.GetNormalizedScoreLine()));
+            return BuildRaceStatsView(_store.LoadRaceStats(_settingsService.Settings.GetNormalizedScoreLine()));
+        }
 
+        private UIElement BuildRaceStatsView(IReadOnlyList<RaceStatsRow> sourceRows)
+        {
+            var rows = SortRaceRows(sourceRows);
             var scrollViewer = new ScrollViewer
             {
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
@@ -1547,7 +1773,7 @@ namespace HDTplugins.Views
                     _raceSortDescending = column != RaceSortColumn.AveragePlacement;
                 }
 
-                ShowLayerContent(BuildRaceStatsView(), false);
+                BeginLoadRaceStatsView();
             };
             Grid.SetColumn(button, columnIndex);
             return button;
@@ -1583,7 +1809,7 @@ namespace HDTplugins.Views
             summaryBorder.MouseLeftButtonUp += delegate
             {
                 _expandedRaceCode = string.Equals(_expandedRaceCode, row.RaceCode, StringComparison.OrdinalIgnoreCase) ? null : row.RaceCode;
-                ShowLayerContent(BuildRaceStatsView(), false);
+                BeginLoadRaceStatsView();
             };
 
             container.Children.Add(summaryBorder);
@@ -1592,6 +1818,35 @@ namespace HDTplugins.Views
                 container.Children.Add(BuildRaceDetail(row));
 
             return container;
+        }
+
+        private async void BeginLoadRaceStatsView()
+        {
+            var loadVersion = ++_contentLoadVersion;
+            _settingsService.Reload();
+            var scoreLine = _settingsService.Settings.GetNormalizedScoreLine();
+            if (_store.TryGetCachedRaceStats(scoreLine, out var cachedRows))
+            {
+                ShowLayerContent(BuildRaceStatsView(cachedRows), false);
+                return;
+            }
+
+            ShowLayerContent(BuildLoadingView(), false);
+            IReadOnlyList<RaceStatsRow> rows;
+            try
+            {
+                rows = await Task.Run(() => _store.LoadRaceStats(scoreLine));
+            }
+            catch (Exception ex)
+            {
+                HdtLog.Error("[BGStats][RaceStats] async load failed: " + ex.Message);
+                if (loadVersion == _contentLoadVersion)
+                    ShowLayerContent(BuildErrorView(ex.Message), false);
+                return;
+            }
+
+            if (loadVersion == _contentLoadVersion)
+                ShowLayerContent(BuildRaceStatsView(rows), false);
         }
 
         private UIElement CreateRaceSummaryText(string text, int columnIndex, HorizontalAlignment alignment, FontWeight fontWeight, Brush foreground = null)
@@ -1758,7 +2013,11 @@ namespace HDTplugins.Views
         private UIElement BuildHeroStatsView()
         {
             _settingsService.Reload();
-            var summary = _store.LoadHeroStats(_settingsService.Settings.GetNormalizedScoreLine());
+            return BuildHeroStatsView(_store.LoadHeroStats(_settingsService.Settings.GetNormalizedScoreLine()));
+        }
+
+        private UIElement BuildHeroStatsView(HeroStatsSummary summary)
+        {
             var rows = SortHeroRows(summary.Heroes);
             var scrollViewer = new ScrollViewer
             {
@@ -1787,6 +2046,35 @@ namespace HDTplugins.Views
                 root.Children.Add(BuildHeroRow(row));
 
             return scrollViewer;
+        }
+
+        private async void BeginLoadHeroStatsView()
+        {
+            var loadVersion = ++_contentLoadVersion;
+            _settingsService.Reload();
+            var scoreLine = _settingsService.Settings.GetNormalizedScoreLine();
+            if (_store.TryGetCachedHeroStats(scoreLine, out var cachedSummary))
+            {
+                ShowLayerContent(BuildHeroStatsView(cachedSummary), false);
+                return;
+            }
+
+            ShowLayerContent(BuildLoadingView(), false);
+            HeroStatsSummary summary;
+            try
+            {
+                summary = await Task.Run(() => _store.LoadHeroStats(scoreLine));
+            }
+            catch (Exception ex)
+            {
+                HdtLog.Error("[BGStats][HeroStats] async load failed: " + ex.Message);
+                if (loadVersion == _contentLoadVersion)
+                    ShowLayerContent(BuildErrorView(ex.Message), false);
+                return;
+            }
+
+            if (loadVersion == _contentLoadVersion)
+                ShowLayerContent(BuildHeroStatsView(summary), false);
         }
 
         private IReadOnlyList<HeroStatsRow> SortHeroRows(IReadOnlyList<HeroStatsRow> rows)
@@ -1908,7 +2196,7 @@ namespace HDTplugins.Views
                     _heroSortDescending = column != HeroSortColumn.AveragePlacement;
                 }
 
-                ShowLayerContent(BuildHeroStatsView(), false);
+                BeginLoadHeroStatsView();
             };
             Grid.SetColumn(button, columnIndex);
             return button;
@@ -1938,7 +2226,7 @@ namespace HDTplugins.Views
             summaryBorder.MouseLeftButtonUp += delegate
             {
                 _expandedHeroCardId = string.Equals(_expandedHeroCardId, row.HeroCardId, StringComparison.OrdinalIgnoreCase) ? null : row.HeroCardId;
-                ShowLayerContent(BuildHeroStatsView(), false);
+                BeginLoadHeroStatsView();
             };
 
             container.Children.Add(summaryBorder);
@@ -2061,40 +2349,160 @@ namespace HDTplugins.Views
             HdtLog.Info($"[BGStats][MatchStats] start page={_currentMatchStatsPage}");
             _settingsService.Reload();
             HdtLog.Info($"[BGStats][MatchStats] after settings elapsed={sw.ElapsedMilliseconds}ms");
+            return BuildMatchStatsView(LoadMatchStatsForCurrentPage(_settingsService.Settings.GetNormalizedScoreLine()));
+        }
 
-            var scrollViewer = new ScrollViewer
+        private UIElement BuildMatchStatsView(MatchStatsLoadResult loadResult)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            EnsureMatchStatsShell();
+            RenderMatchStatsBody(loadResult);
+            HdtLog.Info($"[BGStats][MatchStats] done elapsed={sw.ElapsedMilliseconds}ms");
+            return _matchStatsScrollViewer;
+        }
+
+        private MatchStatsLoadResult LoadMatchStatsForCurrentPage(double scoreLine)
+        {
+            var page = _currentMatchStatsPage;
+            var result = new MatchStatsLoadResult { Page = page };
+            if (page == MatchStatsPage.TavernTempo)
+                result.TavernSummary = _store.LoadTavernTempoSummary();
+            else if (page == MatchStatsPage.Trinkets)
+                result.TrinketSummary = _store.LoadTrinketStats(scoreLine, _currentTrinketFilter);
+            else if (page == MatchStatsPage.Timewarp)
+                result.TimewarpSummary = _store.LoadTimewarpStats(scoreLine, _currentTimewarpFilter);
+            return result;
+        }
+
+        private async void BeginLoadMatchStatsView()
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var loadVersion = ++_contentLoadVersion;
+            _settingsService.Reload();
+            var scoreLine = _settingsService.Settings.GetNormalizedScoreLine();
+            var page = _currentMatchStatsPage;
+            var trinketFilter = _currentTrinketFilter;
+            var timewarpFilter = _currentTimewarpFilter;
+            HdtLog.Info($"[BGStats][Perf][MatchStats] start page={page} trinketFilter={trinketFilter} timewarpFilter={timewarpFilter}");
+            EnsureMatchStatsShell();
+            ShowLayerContent(_matchStatsScrollViewer, false);
+            RefreshMatchStatsPageButtons();
+            HdtLog.Info($"[BGStats][Perf][MatchStats] shellReady elapsed={sw.ElapsedMilliseconds}ms");
+            if (TryBuildCachedMatchStatsResult(page, scoreLine, trinketFilter, timewarpFilter, out var cachedResult))
+            {
+                HdtLog.Info($"[BGStats][Perf][MatchStats] cache=hit page={page} elapsed={sw.ElapsedMilliseconds}ms");
+                RenderMatchStatsBody(cachedResult);
+                HdtLog.Info($"[BGStats][Perf][MatchStats] renderFromCache page={page} elapsed={sw.ElapsedMilliseconds}ms");
+                return;
+            }
+
+            HdtLog.Info($"[BGStats][Perf][MatchStats] cache=miss page={page} elapsed={sw.ElapsedMilliseconds}ms");
+            SetMatchStatsBody(BuildLoadingView());
+            MatchStatsLoadResult result;
+            try
+            {
+                var loadStart = sw.ElapsedMilliseconds;
+                result = await Task.Run(() =>
+                {
+                    var loadResult = new MatchStatsLoadResult { Page = page };
+                    if (page == MatchStatsPage.TavernTempo)
+                        loadResult.TavernSummary = _store.LoadTavernTempoSummary();
+                    else if (page == MatchStatsPage.Trinkets)
+                        loadResult.TrinketSummary = _store.LoadTrinketStats(scoreLine, trinketFilter);
+                    else if (page == MatchStatsPage.Timewarp)
+                        loadResult.TimewarpSummary = _store.LoadTimewarpStats(scoreLine, timewarpFilter);
+                    return loadResult;
+                });
+                HdtLog.Info($"[BGStats][Perf][MatchStats] asyncLoad page={page} stepMs={sw.ElapsedMilliseconds - loadStart} elapsed={sw.ElapsedMilliseconds}ms");
+            }
+            catch (Exception ex)
+            {
+                HdtLog.Error("[BGStats][MatchStats] async load failed: " + ex.Message);
+                if (loadVersion == _contentLoadVersion)
+                    SetMatchStatsBody(BuildErrorView(ex.Message));
+                return;
+            }
+
+            if (loadVersion == _contentLoadVersion)
+            {
+                RenderMatchStatsBody(result);
+                HdtLog.Info($"[BGStats][Perf][MatchStats] renderAfterLoad page={page} elapsed={sw.ElapsedMilliseconds}ms");
+            }
+        }
+
+        private void EnsureMatchStatsShell()
+        {
+            if (_matchStatsScrollViewer != null)
+                return;
+
+            // Keep the expensive outer page controls alive; page/filter switches only replace the body rows.
+            _matchStatsScrollViewer = new ScrollViewer
             {
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
             };
+            _matchStatsRoot = new StackPanel();
+            _matchStatsBody = new StackPanel();
+            _matchStatsScrollViewer.Content = _matchStatsRoot;
+            _matchStatsRoot.Children.Add(BuildMatchStatsPageBar(new Thickness(0, 0, 0, 18)));
+            _matchStatsRoot.Children.Add(_matchStatsBody);
+            ConfigureCrispRendering(_matchStatsScrollViewer);
+        }
 
-            var root = new StackPanel();
-            scrollViewer.Content = root;
-            root.Children.Add(BuildMatchStatsPageBar(_currentMatchStatsPage == MatchStatsPage.Trinkets ? new Thickness(0, 0, 0, 18) : new Thickness(0, 0, 0, 18)));
+        private void SetMatchStatsBody(UIElement content)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            EnsureMatchStatsShell();
+            _matchStatsBody.Children.Clear();
+            if (content != null)
+                _matchStatsBody.Children.Add(content);
+            HdtLog.Info($"[BGStats][Perf][MatchStats] setBody content={content?.GetType().Name ?? "null"} elapsed={sw.ElapsedMilliseconds}ms");
+        }
 
-            if (_currentMatchStatsPage == MatchStatsPage.TavernTempo)
-            {
-                var tavernSummary = _store.LoadTavernTempoSummary();
-                HdtLog.Info($"[BGStats][MatchStats] after tavern summary elapsed={sw.ElapsedMilliseconds}ms");
-                root.Children.Add(BuildTavernTempoView(tavernSummary));
-            }
-            else if (_currentMatchStatsPage == MatchStatsPage.Trinkets)
-            {
-                var trinketSummary = _store.LoadTrinketStats(_settingsService.Settings.GetNormalizedScoreLine(), _currentTrinketFilter);
-                HdtLog.Info($"[BGStats][MatchStats] after trinket summary elapsed={sw.ElapsedMilliseconds}ms");
-                root.Children.Add(BuildTrinketStatsView(trinketSummary));
-            }
-            else if (_currentMatchStatsPage == MatchStatsPage.Timewarp)
-            {
-                var timewarpSummary = _store.LoadTimewarpStats(_settingsService.Settings.GetNormalizedScoreLine(), _currentTimewarpFilter);
-                HdtLog.Info($"[BGStats][MatchStats] after timewarp summary elapsed={sw.ElapsedMilliseconds}ms");
-                root.Children.Add(BuildTimewarpStatsView(timewarpSummary));
-            }
-            else if (_currentMatchStatsPage == MatchStatsPage.Quests)
-                root.Children.Add(BuildQuestStatsPlaceholderView());
+        private void RenderMatchStatsBody(MatchStatsLoadResult loadResult)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            EnsureMatchStatsShell();
+            RefreshMatchStatsPageButtons();
+            if (loadResult?.Page == MatchStatsPage.TavernTempo)
+                RenderTavernTempoStatsView(loadResult.TavernSummary);
+            else if (loadResult?.Page == MatchStatsPage.Trinkets)
+                RenderTrinketStatsRows(loadResult.TrinketSummary);
+            else if (loadResult?.Page == MatchStatsPage.Timewarp)
+                RenderTimewarpStatsRows(loadResult.TimewarpSummary);
+            else if (loadResult?.Page == MatchStatsPage.Quests)
+                RenderQuestStatsView();
+            HdtLog.Info($"[BGStats][Perf][MatchStats] renderBody page={loadResult?.Page.ToString() ?? "null"} elapsed={sw.ElapsedMilliseconds}ms");
+        }
 
-            HdtLog.Info($"[BGStats][MatchStats] done elapsed={sw.ElapsedMilliseconds}ms");
-            return scrollViewer;
+        private bool TryBuildCachedMatchStatsResult(MatchStatsPage page, double scoreLine, TrinketFilter trinketFilter, TimewarpFilter timewarpFilter, out MatchStatsLoadResult result)
+        {
+            result = new MatchStatsLoadResult { Page = page };
+            if (page == MatchStatsPage.TavernTempo)
+            {
+                if (!_store.TryGetCachedTavernTempoSummary(out var tavernSummary))
+                    return false;
+                result.TavernSummary = tavernSummary;
+                return true;
+            }
+
+            if (page == MatchStatsPage.Trinkets)
+            {
+                if (!_store.TryGetCachedTrinketStats(scoreLine, trinketFilter, out var trinketSummary))
+                    return false;
+                result.TrinketSummary = trinketSummary;
+                return true;
+            }
+
+            if (page == MatchStatsPage.Timewarp)
+            {
+                if (!_store.TryGetCachedTimewarpStats(scoreLine, timewarpFilter, out var timewarpSummary))
+                    return false;
+                result.TimewarpSummary = timewarpSummary;
+                return true;
+            }
+
+            return true;
         }
 
         private UIElement BuildMatchStatsPageBar(Thickness margin)
@@ -2103,6 +2511,7 @@ namespace HDTplugins.Views
 
             var panel = new StackPanel { Orientation = Orientation.Horizontal };
             border.Child = panel;
+            _matchStatsPageButtons.Clear();
             panel.Children.Add(CreateMatchStatsPageButton(MatchStatsPage.TavernTempo, "TavernTempo_PageTitle"));
             panel.Children.Add(CreateMatchStatsPageButton(MatchStatsPage.Trinkets, "TrinketStats_PageTitle"));
             panel.Children.Add(CreateMatchStatsPageButton(MatchStatsPage.Timewarp, "TimewarpStats_PageTitle"));
@@ -2127,9 +2536,16 @@ namespace HDTplugins.Views
                     return;
 
                 _currentMatchStatsPage = page;
-                RebuildContent();
+                BeginLoadMatchStatsView();
             };
+            _matchStatsPageButtons[page] = button;
             return button;
+        }
+
+        private void RefreshMatchStatsPageButtons()
+        {
+            foreach (var pair in _matchStatsPageButtons)
+                ApplyChipButtonChrome(pair.Value, pair.Key == _currentMatchStatsPage);
         }
 
         private UIElement BuildTavernTempoView(TavernTempoSummary summary)
@@ -2155,34 +2571,102 @@ namespace HDTplugins.Views
             return root;
         }
 
+        private void RenderTavernTempoStatsView(TavernTempoSummary summary)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var key = BuildMatchStatsUiCacheKey("tempo", $"sections={summary?.Sections?.Count ?? 0}");
+            if (!TryGetCachedMatchStatsUi(key, out var content))
+            {
+                content = BuildTavernTempoView(summary);
+                CacheMatchStatsUi(key, content);
+            }
+
+            SetMatchStatsBody(content);
+            HdtLog.Info($"[BGStats][Perf][TavernTempoUI] render sections={summary?.Sections?.Count ?? 0} elapsed={sw.ElapsedMilliseconds}ms");
+        }
+
+        private void RenderQuestStatsView()
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var key = BuildMatchStatsUiCacheKey("quests");
+            if (!TryGetCachedMatchStatsUi(key, out var content))
+            {
+                content = BuildQuestStatsPlaceholderView();
+                CacheMatchStatsUi(key, content);
+            }
+
+            SetMatchStatsBody(content);
+            HdtLog.Info($"[BGStats][Perf][QuestStatsUI] render elapsed={sw.ElapsedMilliseconds}ms");
+        }
+
         private UIElement BuildTrinketStatsView(TrinketStatsSummary summary)
         {
             var root = new StackPanel();
             root.Children.Add(BuildTrinketFilterBar());
+            _trinketRowsHost = new StackPanel();
+            root.Children.Add(_trinketRowsHost);
+            return root;
+        }
+
+        private void RenderTrinketStatsRows(TrinketStatsSummary summary)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            EnsureMatchStatsShell();
+            if (_trinketStatsShell == null)
+                _trinketStatsShell = BuildTrinketStatsView(summary);
+            SetMatchStatsBody(_trinketStatsShell);
+            RefreshTrinketFilterButtons();
+            RenderTrinketRowsIntoHost(summary);
+            HdtLog.Info($"[BGStats][Perf][TrinketStatsUI] render filter={_currentTrinketFilter} rawRows={summary?.Rows?.Count ?? 0} elapsed={sw.ElapsedMilliseconds}ms");
+        }
+
+        private void RenderTrinketRowsIntoHost(TrinketStatsSummary summary)
+        {
+            if (_trinketRowsHost == null)
+                return;
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            _trinketRowsHost.Children.Clear();
+            var key = BuildMatchStatsUiCacheKey("trinkets", $"{_currentTrinketFilter}|{_trinketSortColumn}|{_trinketSortDescending}");
+            if (TryGetCachedMatchStatsUi(key, out var cachedPanel))
+            {
+                _trinketRowsHost.Children.Add(cachedPanel);
+                HdtLog.Info($"[BGStats][Perf][TrinketStatsUI] rowsCache=hit filter={_currentTrinketFilter} elapsed={sw.ElapsedMilliseconds}ms");
+                return;
+            }
 
             var rows = SortTrinketRows(summary?.Rows);
+            HdtLog.Info($"[BGStats][Perf][TrinketStatsUI] sort/filter rawRows={summary?.Rows?.Count ?? 0} visibleRows={rows.Count} elapsed={sw.ElapsedMilliseconds}ms");
+            var panel = new StackPanel();
             if (rows.Count == 0)
             {
-                root.Children.Add(new TextBlock
+                panel.Children.Add(new TextBlock
                 {
                     Text = Loc.S("Common_NoData"),
                     Foreground = MutedTextBrush,
                     FontSize = 15,
                     Margin = new Thickness(0, 10, 0, 0)
                 });
-                return root;
+                CacheMatchStatsUi(key, panel);
+                _trinketRowsHost.Children.Add(panel);
+                return;
             }
 
-            root.Children.Add(BuildTrinketHeaderRow());
+            var buildStart = sw.ElapsedMilliseconds;
+            panel.Children.Add(BuildTrinketHeaderRow());
             foreach (var row in rows)
-                root.Children.Add(BuildTrinketRow(row));
-
-            return root;
+                panel.Children.Add(BuildTrinketRow(row));
+            CacheMatchStatsUi(key, panel);
+            _trinketRowsHost.Children.Add(panel);
+            HdtLog.Info($"[BGStats][Perf][TrinketStatsUI] buildRows rows={rows.Count} stepMs={sw.ElapsedMilliseconds - buildStart} elapsed={sw.ElapsedMilliseconds}ms");
         }
 
         private IReadOnlyList<TrinketStatsRow> SortTrinketRows(IReadOnlyList<TrinketStatsRow> rows)
         {
-            var ordered = rows ?? Array.Empty<TrinketStatsRow>();
+            // Hide catalog-only trinkets that have no appearances or picks in the current data set.
+            var ordered = (rows ?? Array.Empty<TrinketStatsRow>())
+                .Where(HasTrinketData)
+                .ToList();
             switch (_trinketSortColumn)
             {
                 case TrinketSortColumn.Name:
@@ -2239,6 +2723,7 @@ namespace HDTplugins.Views
 
             var panel = new StackPanel { Orientation = Orientation.Horizontal };
             border.Child = panel;
+            _trinketFilterButtons.Clear();
             panel.Children.Add(CreateTrinketFilterButton(TrinketFilter.All, "TrinketStats_FilterAll"));
             panel.Children.Add(CreateTrinketFilterButton(TrinketFilter.Lesser, "TrinketStats_FilterLesser"));
             panel.Children.Add(CreateTrinketFilterButton(TrinketFilter.Greater, "TrinketStats_FilterGreater"));
@@ -2262,9 +2747,16 @@ namespace HDTplugins.Views
                     return;
 
                 _currentTrinketFilter = filter;
-                RebuildContent();
+                BeginLoadMatchStatsView();
             };
+            _trinketFilterButtons[filter] = button;
             return button;
+        }
+
+        private void RefreshTrinketFilterButtons()
+        {
+            foreach (var pair in _trinketFilterButtons)
+                ApplyChipButtonChrome(pair.Value, pair.Key == _currentTrinketFilter);
         }
 
         private UIElement BuildTrinketHeaderRow()
@@ -2303,7 +2795,7 @@ namespace HDTplugins.Views
                     _trinketSortDescending = column != TrinketSortColumn.Name && column != TrinketSortColumn.AveragePlacement;
                 }
 
-                ShowLayerContent(BuildMatchStatsView(), false);
+                BeginLoadMatchStatsView();
             };
             Grid.SetColumn(button, columnIndex);
             return button;
@@ -2311,7 +2803,7 @@ namespace HDTplugins.Views
 
         private UIElement BuildTrinketRow(TrinketStatsRow row)
         {
-            var border = CreateCardBorder(SurfaceBrush, new Thickness(14, 12, 14, 12), new Thickness(0, 0, 0, 6));
+            var border = CreateListRowBorder(SurfaceBrush, new Thickness(14, 12, 14, 12), new Thickness(0, 0, 0, 6));
 
             var grid = CreateTrinketGrid();
             border.Child = grid;
@@ -2340,25 +2832,62 @@ namespace HDTplugins.Views
         {
             var root = new StackPanel();
             root.Children.Add(BuildTimewarpFilterBar());
+            _timewarpRowsHost = new StackPanel();
+            root.Children.Add(_timewarpRowsHost);
+            return root;
+        }
+
+        private void RenderTimewarpStatsRows(TimewarpStatsSummary summary)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            EnsureMatchStatsShell();
+            if (_timewarpStatsShell == null)
+                _timewarpStatsShell = BuildTimewarpStatsView(summary);
+            SetMatchStatsBody(_timewarpStatsShell);
+            RefreshTimewarpFilterButtons();
+            RenderTimewarpRowsIntoHost(summary);
+            HdtLog.Info($"[BGStats][Perf][TimewarpStatsUI] render filter={_currentTimewarpFilter} rawRows={summary?.Rows?.Count ?? 0} elapsed={sw.ElapsedMilliseconds}ms");
+        }
+
+        private void RenderTimewarpRowsIntoHost(TimewarpStatsSummary summary)
+        {
+            if (_timewarpRowsHost == null)
+                return;
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            _timewarpRowsHost.Children.Clear();
+            var key = BuildMatchStatsUiCacheKey("timewarp", $"{_currentTimewarpFilter}|{_timewarpSortColumn}|{_timewarpSortDescending}");
+            if (TryGetCachedMatchStatsUi(key, out var cachedPanel))
+            {
+                _timewarpRowsHost.Children.Add(cachedPanel);
+                HdtLog.Info($"[BGStats][Perf][TimewarpStatsUI] rowsCache=hit filter={_currentTimewarpFilter} elapsed={sw.ElapsedMilliseconds}ms");
+                return;
+            }
 
             var rows = SortTimewarpRows(summary?.Rows);
+            HdtLog.Info($"[BGStats][Perf][TimewarpStatsUI] sort rawRows={summary?.Rows?.Count ?? 0} visibleRows={rows.Count} elapsed={sw.ElapsedMilliseconds}ms");
+            var panel = new StackPanel();
             if (rows.Count == 0)
             {
-                root.Children.Add(new TextBlock
+                panel.Children.Add(new TextBlock
                 {
                     Text = Loc.S("Common_NoData"),
                     Foreground = MutedTextBrush,
                     FontSize = 15,
                     Margin = new Thickness(0, 10, 0, 0)
                 });
-                return root;
+                CacheMatchStatsUi(key, panel);
+                _timewarpRowsHost.Children.Add(panel);
+                return;
             }
 
-            root.Children.Add(BuildTimewarpHeaderRow());
+            var buildStart = sw.ElapsedMilliseconds;
+            panel.Children.Add(BuildTimewarpHeaderRow());
             foreach (var row in rows)
-                root.Children.Add(BuildTimewarpRow(row));
-
-            return root;
+                panel.Children.Add(BuildTimewarpRow(row));
+            CacheMatchStatsUi(key, panel);
+            _timewarpRowsHost.Children.Add(panel);
+            HdtLog.Info($"[BGStats][Perf][TimewarpStatsUI] buildRows rows={rows.Count} stepMs={sw.ElapsedMilliseconds - buildStart} elapsed={sw.ElapsedMilliseconds}ms");
         }
 
         private IReadOnlyList<TimewarpStatsRow> SortTimewarpRows(IReadOnlyList<TimewarpStatsRow> rows)
@@ -2426,6 +2955,7 @@ namespace HDTplugins.Views
 
             var panel = new StackPanel { Orientation = Orientation.Horizontal };
             border.Child = panel;
+            _timewarpFilterButtons.Clear();
             panel.Children.Add(CreateTimewarpFilterButton(TimewarpFilter.All, "TimewarpStats_FilterAll"));
             panel.Children.Add(CreateTimewarpFilterButton(TimewarpFilter.Major, "TimewarpStats_FilterMajor"));
             panel.Children.Add(CreateTimewarpFilterButton(TimewarpFilter.Minor, "TimewarpStats_FilterMinor"));
@@ -2449,9 +2979,16 @@ namespace HDTplugins.Views
                     return;
 
                 _currentTimewarpFilter = filter;
-                RebuildContent();
+                BeginLoadMatchStatsView();
             };
+            _timewarpFilterButtons[filter] = button;
             return button;
+        }
+
+        private void RefreshTimewarpFilterButtons()
+        {
+            foreach (var pair in _timewarpFilterButtons)
+                ApplyChipButtonChrome(pair.Value, pair.Key == _currentTimewarpFilter);
         }
 
         private UIElement BuildTimewarpHeaderRow()
@@ -2490,7 +3027,7 @@ namespace HDTplugins.Views
                     _timewarpSortDescending = column != TimewarpSortColumn.Name && column != TimewarpSortColumn.AveragePlacement;
                 }
 
-                ShowLayerContent(BuildMatchStatsView(), false);
+                BeginLoadMatchStatsView();
             };
             Grid.SetColumn(button, columnIndex);
             return button;
@@ -2498,7 +3035,7 @@ namespace HDTplugins.Views
 
         private UIElement BuildTimewarpRow(TimewarpStatsRow row)
         {
-            var border = CreateCardBorder(SurfaceBrush, new Thickness(14, 12, 14, 12), new Thickness(0, 0, 0, 6));
+            var border = CreateListRowBorder(SurfaceBrush, new Thickness(14, 12, 14, 12), new Thickness(0, 0, 0, 6));
 
             var grid = CreateTimewarpGrid();
             border.Child = grid;
@@ -2691,6 +3228,10 @@ namespace HDTplugins.Views
         private void RenderHistoryRows(IReadOnlyList<BgMatchRow> rows)
         {
             _historyList.Children.Clear();
+            var renderVersion = ++_historyRenderVersion;
+            _historyVisibleRows = rows ?? Array.Empty<BgMatchRow>();
+            _historyRenderedRowCount = 0;
+            _historyAppendScheduled = false;
             if (rows.Count == 0)
             {
                 _historyList.Children.Add(new TextBlock
@@ -2703,17 +3244,74 @@ namespace HDTplugins.Views
                 return;
             }
 
-            foreach (var row in rows)
+            // Keep the first history paint bounded. More rows are appended only when the user scrolls down.
+            AppendHistoryRows(renderVersion);
+        }
+
+        private void OnHistoryScrollChanged(object sender, ScrollChangedEventArgs e)
+        {
+            if (_historyVisibleRows == null || _historyRenderedRowCount >= _historyVisibleRows.Count)
+                return;
+            if (_historyAppendScheduled)
+                return;
+            if (e.ExtentHeight <= 0 || e.ViewportHeight <= 0)
+                return;
+
+            if (e.VerticalOffset + e.ViewportHeight >= e.ExtentHeight - 80)
             {
-                var card = BuildHistoryCard(row);
-                _historyCards[row.MatchId] = card;
-                _historyList.Children.Add(card);
+                _historyAppendScheduled = true;
+                var renderVersion = _historyRenderVersion;
+                Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+                {
+                    _historyAppendScheduled = false;
+                    if (renderVersion == _historyRenderVersion)
+                        AppendHistoryRows(renderVersion);
+                }));
             }
+        }
+
+        private static bool HasTrinketData(TrinketStatsRow row)
+        {
+            return row != null && (row.AppearanceCount > 0 || row.PickCount > 0 || row.MatchCount > 0);
+        }
+
+        private void AppendHistoryRows(int renderVersion)
+        {
+            if (renderVersion != _historyRenderVersion || _historyVisibleRows == null)
+                return;
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var startIndex = _historyRenderedRowCount;
+            var endIndex = Math.Min(_historyVisibleRows.Count, startIndex + HistoryPageSize);
+            for (var i = startIndex; i < endIndex; i++)
+                AddHistoryRowCard(_historyVisibleRows[i]);
+
+            _historyRenderedRowCount = endIndex;
+            RestoreSelectedHistoryCard();
+            HdtLog.Info($"[BGStats][Perf][HistoryRender] appendRows start={startIndex} end={endIndex} total={_historyVisibleRows.Count} elapsed={sw.ElapsedMilliseconds}ms");
+        }
+
+        private void AddHistoryRowCard(BgMatchRow row)
+        {
+            ResolveHistoryRowDisplay(row);
+            var card = BuildHistoryCard(row);
+            if (!string.IsNullOrWhiteSpace(row.MatchId))
+                _historyCards[row.MatchId] = card;
+            _historyList.Children.Add(card);
+        }
+
+        private void ResolveHistoryRowDisplay(BgMatchRow row)
+        {
+            if (row == null)
+                return;
+
+            row.AnomalyDisplay = ResolveAnomalyDisplay(row) ?? row.AnomalyDisplay;
+            row.FinalBoardDisplay = ResolveFinalBoardDisplay(row) ?? row.FinalBoardDisplay;
         }
 
         private Border BuildHistoryCard(BgMatchRow row)
         {
-            var border = CreateCardBorder(SurfaceBrush, new Thickness(16, 12, 16, 12), new Thickness(0, 0, 0, 18));
+            var border = CreateHistoryCardBorder(SurfaceBrush, new Thickness(16, 12, 16, 12), new Thickness(0, 0, 0, 18));
             border.Cursor = Cursors.Hand;
 
             var stack = new StackPanel();
@@ -2957,6 +3555,7 @@ namespace HDTplugins.Views
                         _selectedMatchId = null;
                         _store.SetArchiveByKey(archive.Key);
                         InvalidateHistoryViewCache();
+                        ClearMatchStatsUiCache("archive");
                         RefreshVersionButton();
                         RefreshHistoryToolbar();
                         RenderHistoryView();
@@ -2996,6 +3595,7 @@ namespace HDTplugins.Views
                         _settingsService.Save();
                         _selectedMatchId = null;
                         InvalidateHistoryViewCache();
+                        ClearMatchStatsUiCache("account");
                         RefreshAccountButton();
                         RefreshVersionButton();
                         RefreshHistoryToolbar();
@@ -3741,6 +4341,7 @@ namespace HDTplugins.Views
             snapshot.HiddenAutoTags = hiddenAutoTags;
             _store.UpdateManualTags(snapshot.MatchId, manual, hiddenAutoTags);
             InvalidateHistoryViewCache();
+            ClearMatchStatsUiCache("tags");
             ShowMatchDetails(snapshot.MatchId, false);
         }
 
@@ -3758,6 +4359,7 @@ namespace HDTplugins.Views
             snapshot.HiddenAutoTags = hiddenAutoTags;
             _store.UpdateManualTags(snapshot.MatchId, manual, hiddenAutoTags);
             InvalidateHistoryViewCache();
+            ClearMatchStatsUiCache("tags");
             ShowMatchDetails(snapshot.MatchId, false);
         }
 

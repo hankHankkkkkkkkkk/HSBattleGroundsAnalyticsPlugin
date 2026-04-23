@@ -22,7 +22,7 @@ namespace HDTplugins
         public string Name => Loc.S("Plugin_Name");
         public string Description => Loc.S("Plugin_Description");
         public string Author => "Hank";
-        public Version Version => new Version(1, 3, 1);
+        public Version Version => new Version(2, 1, 1);
         public string ButtonText => Loc.S("Plugin_ButtonText");
         public MenuItem MenuItem => _menuItem;
 
@@ -34,10 +34,12 @@ namespace HDTplugins
         private BgStatsWindow _statsWindow;
         private MenuItem _menuItem;
         private DispatcherTimer _startupGameTextRefreshTimer;
+        private DispatcherTimer _deferredStartupTimer;
         private PluginUpdateService _updateService;
         private bool _wasHearthstoneRunning;
         private string _lastRuntimeAccountKey;
         private BgDraftOverlayService _draftOverlayService;
+        private bool _selectedAccountInitialized;
 
         public void OnLoad()
         {
@@ -50,12 +52,9 @@ namespace HDTplugins
 
             _settingsService = new PluginSettingsService();
             _settingsService.Initialize(_store.TablesDirectoryPath);
-            _store.InitializeSelectedAccount(_settingsService.Settings.SelectedAccountKey);
             LocalizationService.Initialize(_settingsService.Settings.Language);
-            GameTextService.Initialize();
+            GameTextService.Initialize(false);
             _updateService = new PluginUpdateService(Assembly.GetExecutingAssembly().Location, Version);
-            ScheduleStartupGameTextRefresh();
-            ScheduleUpdateCheck();
 
             _probe = new BgGameProbe();
             _draftOverlayService = new BgDraftOverlayService(_store, _settingsService);
@@ -68,6 +67,8 @@ namespace HDTplugins
             if (_settingsService.Settings.AutoOpenOnStartup)
                 ShowWindowAsync();
 
+            ScheduleDeferredStartupWork();
+
             HdtLog.Info("[Hank的log信息] 插件已加载（已订阅事件，GUI 自动启动）");
         }
 
@@ -76,6 +77,7 @@ namespace HDTplugins
             _enabled = false;
             LocalizationService.LanguageChanged -= OnLanguageChanged;
             StopStartupGameTextRefreshTimer();
+            StopDeferredStartupTimer();
             _updateService?.Dispose();
             _updateService = null;
             _draftOverlayService?.Dispose();
@@ -181,10 +183,76 @@ namespace HDTplugins
             }
 
             TryAttachOwner();
-            _statsWindow.SyncVersionSelection(null);
             _statsWindow.Show();
             _statsWindow.Activate();
-            ScheduleStartupGameTextRefresh();
+            _statsWindow.BeginInitialHistoryLoad();
+        }
+
+        private void ScheduleDeferredStartupWork()
+        {
+            var dispatcher = Application.Current?.Dispatcher;
+            if (dispatcher == null)
+                return;
+
+            dispatcher.BeginInvoke(new Action(() =>
+            {
+                StopDeferredStartupTimer();
+                _deferredStartupTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher)
+                {
+                    Interval = TimeSpan.FromSeconds(1)
+                };
+                _deferredStartupTimer.Tick += DeferredStartupTimerOnTick;
+                _deferredStartupTimer.Start();
+            }));
+        }
+
+        private void DeferredStartupTimerOnTick(object sender, EventArgs e)
+        {
+            StopDeferredStartupTimer();
+            StartDeferredStartupWork();
+        }
+
+        private void StopDeferredStartupTimer()
+        {
+            if (_deferredStartupTimer == null)
+                return;
+
+            _deferredStartupTimer.Stop();
+            _deferredStartupTimer.Tick -= DeferredStartupTimerOnTick;
+            _deferredStartupTimer = null;
+        }
+
+        private void StartDeferredStartupWork()
+        {
+            var dispatcher = Application.Current?.Dispatcher;
+            Task.Run(() =>
+            {
+                try
+                {
+                    EnsureSelectedAccountInitialized();
+                    GameTextService.ForceRefreshCurrentLanguage();
+                    _store.RunDeferredStartupMaintenance();
+                    _settingsService.Reload();
+                    _store.WarmCaches(_settingsService.Settings.GetNormalizedScoreLine());
+                    HdtLog.Info("[BGStats][Startup] 延迟启动任务完成");
+                }
+                catch (Exception ex)
+                {
+                    HdtLog.Warn("[BGStats][Startup] 延迟启动任务失败，已忽略: " + ex.Message);
+                }
+
+                ScheduleUpdateCheck();
+            });
+        }
+
+        private void EnsureSelectedAccountInitialized()
+        {
+            if (_selectedAccountInitialized)
+                return;
+
+            _settingsService.Reload();
+            _store.EnsureSelectedAccountInitialized(_settingsService.Settings.SelectedAccountKey);
+            _selectedAccountInitialized = true;
         }
 
         private void ScheduleStartupGameTextRefresh()
