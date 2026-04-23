@@ -64,6 +64,7 @@ namespace HDTplugins.Services
         public AccountRecord CurrentAccount { get; private set; }
         public string CurrentAccountKey => CurrentAccount?.Key;
         public string SelectedArchiveKey => _selectedArchiveKey;
+        public long CacheVersion => _snapshotCacheVersion;
         public string FinalFilePath => _finalFilePath;
         public string TagConfigPath => _lineupTagService.ConfigPath;
         public string TablesDirectoryPath => _tablesDir;
@@ -506,12 +507,17 @@ namespace HDTplugins.Services
 
         public IReadOnlyList<BgMatchRow> LoadMatchRows()
         {
+            var sw = Stopwatch.StartNew();
             var snapshots = LoadSnapshots();
+            HdtLog.Info($"[BGStats][Perf][LoadMatchRows] after LoadSnapshots snapshots={snapshots.Count} elapsed={sw.ElapsedMilliseconds}ms");
             var cacheKey = BuildStatsCacheKey("matches", null);
             lock (_cacheLock)
             {
                 if (string.Equals(_matchRowsCacheKey, cacheKey, StringComparison.OrdinalIgnoreCase) && _matchRowsCache != null)
+                {
+                    HdtLog.Info($"[BGStats][Perf][LoadMatchRows] cache hit rows={_matchRowsCache.Count} elapsed={sw.ElapsedMilliseconds}ms");
                     return _matchRowsCache;
+                }
             }
 
             var rows = snapshots
@@ -532,6 +538,7 @@ namespace HDTplugins.Services
                     Tags = MergeTags(snapshot).Take(5).ToList()
                 })
                 .ToList();
+            HdtLog.Info($"[BGStats][Perf][LoadMatchRows] built rows={rows.Count} elapsed={sw.ElapsedMilliseconds}ms");
 
             lock (_cacheLock)
             {
@@ -544,17 +551,25 @@ namespace HDTplugins.Services
 
         public bool TryGetCachedMatchRows(out IReadOnlyList<BgMatchRow> rows)
         {
+            var sw = Stopwatch.StartNew();
             rows = null;
             if (!IsSnapshotCacheCurrent())
+            {
+                HdtLog.Info($"[BGStats][Perf][MatchRowsCache] miss reason=snapshot elapsed={sw.ElapsedMilliseconds}ms");
                 return false;
+            }
 
             var cacheKey = BuildStatsCacheKey("matches", null);
             lock (_cacheLock)
             {
                 if (!string.Equals(_matchRowsCacheKey, cacheKey, StringComparison.OrdinalIgnoreCase) || _matchRowsCache == null)
+                {
+                    HdtLog.Info($"[BGStats][Perf][MatchRowsCache] miss reason=rows elapsed={sw.ElapsedMilliseconds}ms");
                     return false;
+                }
 
                 rows = _matchRowsCache;
+                HdtLog.Info($"[BGStats][Perf][MatchRowsCache] hit rows={rows.Count} elapsed={sw.ElapsedMilliseconds}ms");
                 return true;
             }
         }
@@ -653,13 +668,18 @@ namespace HDTplugins.Services
 
         public TrinketStatsSummary LoadTrinketStats(double scoreLine, TrinketFilter filter)
         {
+            var sw = Stopwatch.StartNew();
             var normalizedScoreLine = NormalizeScoreLine(scoreLine);
             var snapshots = LoadSnapshots();
+            HdtLog.Info($"[BGStats][Perf][LoadTrinketStats] after LoadSnapshots filter={filter} snapshots={snapshots.Count} elapsed={sw.ElapsedMilliseconds}ms");
             var cacheKey = BuildStatsCacheKey("trinkets", normalizedScoreLine.ToString("F1") + "|" + filter);
             lock (_cacheLock)
             {
                 if (_trinketStatsCache.TryGetValue(cacheKey, out var cached))
+                {
+                    HdtLog.Info($"[BGStats][Perf][LoadTrinketStats] cache hit filter={filter} rows={cached.Rows?.Count ?? 0} elapsed={sw.ElapsedMilliseconds}ms");
                     return cached;
+                }
             }
 
             var appearances = new Dictionary<string, List<BgSnapshot>>(StringComparer.OrdinalIgnoreCase);
@@ -667,6 +687,7 @@ namespace HDTplugins.Services
             var eligibleSnapshots = snapshots
                 .Where(snapshot => ShouldShowTrinketDetails(snapshot))
                 .ToList();
+            HdtLog.Info($"[BGStats][Perf][LoadTrinketStats] eligible filter={filter} eligible={eligibleSnapshots.Count} elapsed={sw.ElapsedMilliseconds}ms");
 
             foreach (var snapshot in eligibleSnapshots)
             {
@@ -708,6 +729,7 @@ namespace HDTplugins.Services
                 .Concat(picks.Keys)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
+            HdtLog.Info($"[BGStats][Perf][LoadTrinketStats] aggregated filter={filter} cards={cardIds.Count} appearances={appearances.Count} picks={picks.Count} elapsed={sw.ElapsedMilliseconds}ms");
 
             var summary = new TrinketStatsSummary
             {
@@ -744,36 +766,49 @@ namespace HDTplugins.Services
                 _trinketStatsCache[cacheKey] = summary;
             }
 
+            HdtLog.Info($"[BGStats][Perf][LoadTrinketStats] built filter={filter} rows={summary.Rows.Count} elapsed={sw.ElapsedMilliseconds}ms");
             return summary;
         }
 
         public bool TryGetCachedTrinketStats(double scoreLine, TrinketFilter filter, out TrinketStatsSummary summary)
         {
+            var sw = Stopwatch.StartNew();
             summary = null;
             if (!IsSnapshotCacheCurrent())
+            {
+                HdtLog.Info($"[BGStats][Perf][TrinketStatsCache] miss filter={filter} reason=snapshot elapsed={sw.ElapsedMilliseconds}ms");
                 return false;
+            }
 
             var cacheKey = BuildStatsCacheKey("trinkets", NormalizeScoreLine(scoreLine).ToString("F1") + "|" + filter);
             lock (_cacheLock)
             {
-                return _trinketStatsCache.TryGetValue(cacheKey, out summary);
+                var hit = _trinketStatsCache.TryGetValue(cacheKey, out summary);
+                HdtLog.Info($"[BGStats][Perf][TrinketStatsCache] {(hit ? "hit" : "miss")} filter={filter} rows={summary?.Rows?.Count ?? 0} elapsed={sw.ElapsedMilliseconds}ms");
+                return hit;
             }
         }
 
         public TimewarpStatsSummary LoadTimewarpStats(double scoreLine, TimewarpFilter filter)
         {
+            var sw = Stopwatch.StartNew();
             var normalizedScoreLine = NormalizeScoreLine(scoreLine);
             var snapshots = LoadSnapshots();
+            HdtLog.Info($"[BGStats][Perf][LoadTimewarpStats] after LoadSnapshots filter={filter} snapshots={snapshots.Count} elapsed={sw.ElapsedMilliseconds}ms");
             var cacheKey = BuildStatsCacheKey("timewarp", normalizedScoreLine.ToString("F1") + "|" + filter);
             lock (_cacheLock)
             {
                 if (_timewarpStatsCache.TryGetValue(cacheKey, out var cached))
+                {
+                    HdtLog.Info($"[BGStats][Perf][LoadTimewarpStats] cache hit filter={filter} rows={cached.Rows?.Count ?? 0} elapsed={sw.ElapsedMilliseconds}ms");
                     return cached;
+                }
             }
 
             var eligibleSnapshots = snapshots
                 .Where(snapshot => (snapshot.TimewarpEntries ?? new List<BgTimewarpEntry>()).Any(entry => IsMatchingTimewarpEntry(entry, filter)))
                 .ToList();
+            HdtLog.Info($"[BGStats][Perf][LoadTimewarpStats] eligible filter={filter} eligible={eligibleSnapshots.Count} elapsed={sw.ElapsedMilliseconds}ms");
             var appearances = new Dictionary<string, List<BgSnapshot>>(StringComparer.OrdinalIgnoreCase);
             var picks = new Dictionary<string, List<BgSnapshot>>(StringComparer.OrdinalIgnoreCase);
 
@@ -812,6 +847,7 @@ namespace HDTplugins.Services
                 .Concat(picks.Keys)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
+            HdtLog.Info($"[BGStats][Perf][LoadTimewarpStats] aggregated filter={filter} cards={cardIds.Count} appearances={appearances.Count} picks={picks.Count} elapsed={sw.ElapsedMilliseconds}ms");
 
             var summary = new TimewarpStatsSummary
             {
@@ -848,19 +884,26 @@ namespace HDTplugins.Services
                 _timewarpStatsCache[cacheKey] = summary;
             }
 
+            HdtLog.Info($"[BGStats][Perf][LoadTimewarpStats] built filter={filter} rows={summary.Rows.Count} elapsed={sw.ElapsedMilliseconds}ms");
             return summary;
         }
 
         public bool TryGetCachedTimewarpStats(double scoreLine, TimewarpFilter filter, out TimewarpStatsSummary summary)
         {
+            var sw = Stopwatch.StartNew();
             summary = null;
             if (!IsSnapshotCacheCurrent())
+            {
+                HdtLog.Info($"[BGStats][Perf][TimewarpStatsCache] miss filter={filter} reason=snapshot elapsed={sw.ElapsedMilliseconds}ms");
                 return false;
+            }
 
             var cacheKey = BuildStatsCacheKey("timewarp", NormalizeScoreLine(scoreLine).ToString("F1") + "|" + filter);
             lock (_cacheLock)
             {
-                return _timewarpStatsCache.TryGetValue(cacheKey, out summary);
+                var hit = _timewarpStatsCache.TryGetValue(cacheKey, out summary);
+                HdtLog.Info($"[BGStats][Perf][TimewarpStatsCache] {(hit ? "hit" : "miss")} filter={filter} rows={summary?.Rows?.Count ?? 0} elapsed={sw.ElapsedMilliseconds}ms");
+                return hit;
             }
         }
 
@@ -1271,30 +1314,46 @@ namespace HDTplugins.Services
 
         private IReadOnlyList<BgSnapshot> LoadSnapshots()
         {
+            var sw = Stopwatch.StartNew();
             var finalFilePaths = GetSelectedArchiveFinalFilePaths();
             var cacheKey = BuildSnapshotCacheKey(finalFilePaths);
             lock (_cacheLock)
             {
                 if (string.Equals(_snapshotCacheKey, cacheKey, StringComparison.OrdinalIgnoreCase) && _snapshotCache != null)
+                {
+                    HdtLog.Info($"[BGStats][Perf][LoadSnapshots] cache hit files={finalFilePaths.Count} snapshots={_snapshotCache.Count} version={_snapshotCacheVersion} elapsed={sw.ElapsedMilliseconds}ms");
                     return _snapshotCache;
+                }
             }
 
             var rows = new List<BgSnapshot>();
             var seenMatchIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var existingFiles = 0;
+            var totalLines = 0;
+            var invalidRows = 0;
+            var duplicateRows = 0;
             foreach (var finalFilePath in finalFilePaths)
             {
                 if (string.IsNullOrWhiteSpace(finalFilePath) || !File.Exists(finalFilePath))
                     continue;
 
+                existingFiles++;
                 foreach (var line in File.ReadLines(finalFilePath, Encoding.UTF8))
                 {
+                    totalLines++;
                     var snapshot = SafeDeserialize(line);
                     if (snapshot == null || snapshot.Placement <= 0)
+                    {
+                        invalidRows++;
                         continue;
+                    }
 
                     snapshot = NormalizeSnapshot(snapshot);
                     if (!string.IsNullOrWhiteSpace(snapshot.MatchId) && !seenMatchIds.Add(snapshot.MatchId))
+                    {
+                        duplicateRows++;
                         continue;
+                    }
 
                     rows.Add(snapshot);
                 }
@@ -1308,6 +1367,7 @@ namespace HDTplugins.Services
                 ClearAggregateCaches();
             }
 
+            HdtLog.Info($"[BGStats][Perf][LoadSnapshots] loaded files={existingFiles}/{finalFilePaths.Count} lines={totalLines} snapshots={rows.Count} invalid={invalidRows} duplicates={duplicateRows} version={_snapshotCacheVersion} elapsed={sw.ElapsedMilliseconds}ms");
             return rows;
         }
 
