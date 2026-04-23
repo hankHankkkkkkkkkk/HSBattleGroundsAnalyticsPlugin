@@ -56,6 +56,7 @@ namespace HDTplugins.Services
         private IReadOnlyList<AccountRecord> _accountsCache;
         private readonly Dictionary<string, TrinketStatsSummary> _trinketStatsCache = new Dictionary<string, TrinketStatsSummary>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, TimewarpStatsSummary> _timewarpStatsCache = new Dictionary<string, TimewarpStatsSummary>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, QuestStatsSummary> _questStatsCache = new Dictionary<string, QuestStatsSummary>(StringComparer.OrdinalIgnoreCase);
 
         public string CurrentMatchId { get; private set; }
         public string CurrentMatchTimestampUtc { get; private set; }
@@ -755,6 +756,7 @@ namespace HDTplugins.Services
                             ScoreRate = pickSnapshots.Count == 0 ? 0 : pickSnapshots.Count(x => x.Placement < normalizedScoreLine) / (double)pickSnapshots.Count
                         };
                     })
+                    .Where(row => row.PickRate > 0)
                     .OrderByDescending(x => x.PickCount)
                     .ThenByDescending(x => x.AppearanceCount)
                     .ThenBy(x => x.CardName, StringComparer.CurrentCultureIgnoreCase)
@@ -873,6 +875,7 @@ namespace HDTplugins.Services
                             ScoreRate = pickSnapshots.Count == 0 ? 0 : pickSnapshots.Count(x => x.Placement < normalizedScoreLine) / (double)pickSnapshots.Count
                         };
                     })
+                    .Where(row => row.PickRate > 0)
                     .OrderByDescending(x => x.AppearanceCount)
                     .ThenByDescending(x => x.PickCount)
                     .ThenBy(x => x.CardName, StringComparer.CurrentCultureIgnoreCase)
@@ -885,6 +888,98 @@ namespace HDTplugins.Services
             }
 
             HdtLog.Info($"[BGStats][Perf][LoadTimewarpStats] built filter={filter} rows={summary.Rows.Count} elapsed={sw.ElapsedMilliseconds}ms");
+            return summary;
+        }
+
+        public QuestStatsSummary LoadQuestStats(double scoreLine)
+        {
+            var sw = Stopwatch.StartNew();
+            var normalizedScoreLine = NormalizeScoreLine(scoreLine);
+            var snapshots = LoadSnapshots();
+            HdtLog.Info($"[BGStats][Perf][LoadQuestStats] after LoadSnapshots snapshots={snapshots.Count} elapsed={sw.ElapsedMilliseconds}ms");
+            var cacheKey = BuildStatsCacheKey("quests", normalizedScoreLine.ToString("F1"));
+            lock (_cacheLock)
+            {
+                if (_questStatsCache.TryGetValue(cacheKey, out var cached))
+                {
+                    HdtLog.Info($"[BGStats][Perf][LoadQuestStats] cache hit rows={cached.Rows?.Count ?? 0} elapsed={sw.ElapsedMilliseconds}ms");
+                    return cached;
+                }
+            }
+
+            var eligibleSnapshots = snapshots
+                .Where(snapshot => !string.IsNullOrWhiteSpace(snapshot.QuestCardId))
+                .ToList();
+            HdtLog.Info($"[BGStats][Perf][LoadQuestStats] eligible={eligibleSnapshots.Count} elapsed={sw.ElapsedMilliseconds}ms");
+
+            var picks = new Dictionary<string, List<BgSnapshot>>(StringComparer.OrdinalIgnoreCase);
+            var rewards = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var snapshot in eligibleSnapshots)
+            {
+                var questCardId = snapshot.QuestCardId.Trim();
+                if (!picks.TryGetValue(questCardId, out var group))
+                {
+                    group = new List<BgSnapshot>();
+                    picks[questCardId] = group;
+                }
+
+                group.Add(snapshot);
+
+                if (!string.IsNullOrWhiteSpace(snapshot.QuestRewardCardId))
+                {
+                    if (!rewards.TryGetValue(questCardId, out var rewardCounts))
+                    {
+                        rewardCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                        rewards[questCardId] = rewardCounts;
+                    }
+
+                    var rewardCardId = snapshot.QuestRewardCardId.Trim();
+                    rewardCounts[rewardCardId] = rewardCounts.TryGetValue(rewardCardId, out var count) ? count + 1 : 1;
+                }
+            }
+
+            var summary = new QuestStatsSummary
+            {
+                EligibleMatches = eligibleSnapshots.Count,
+                Rows = picks
+                    .Select(pair =>
+                    {
+                        var pickSnapshots = pair.Value ?? new List<BgSnapshot>();
+                        rewards.TryGetValue(pair.Key, out var rewardCounts);
+                        var rewardCardId = rewardCounts == null || rewardCounts.Count == 0
+                            ? string.Empty
+                            : rewardCounts
+                                .OrderByDescending(x => x.Value)
+                                .ThenBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
+                                .First()
+                                .Key;
+
+                        return new QuestStatsRow
+                        {
+                            CardId = pair.Key,
+                            CardName = GameTextService.GetCardName(pair.Key, pair.Key),
+                            RewardCardId = rewardCardId,
+                            RewardCardName = string.IsNullOrWhiteSpace(rewardCardId) ? Loc.S("Common_None") : GameTextService.GetCardName(rewardCardId, rewardCardId),
+                            MatchCount = pickSnapshots.Count,
+                            PickRate = eligibleSnapshots.Count == 0 ? 0 : pickSnapshots.Count / (double)eligibleSnapshots.Count,
+                            AveragePlacement = pickSnapshots.Count == 0 ? 0 : pickSnapshots.Average(x => x.Placement),
+                            FirstRate = pickSnapshots.Count == 0 ? 0 : pickSnapshots.Count(x => x.Placement == 1) / (double)pickSnapshots.Count,
+                            ScoreRate = pickSnapshots.Count == 0 ? 0 : pickSnapshots.Count(x => x.Placement < normalizedScoreLine) / (double)pickSnapshots.Count
+                        };
+                    })
+                    .Where(row => row.PickRate > 0)
+                    .OrderByDescending(x => x.MatchCount)
+                    .ThenBy(x => x.AveragePlacement)
+                    .ThenBy(x => x.CardName, StringComparer.CurrentCultureIgnoreCase)
+                    .ToList()
+            };
+
+            lock (_cacheLock)
+            {
+                _questStatsCache[cacheKey] = summary;
+            }
+
+            HdtLog.Info($"[BGStats][Perf][LoadQuestStats] built rows={summary.Rows.Count} elapsed={sw.ElapsedMilliseconds}ms");
             return summary;
         }
 
@@ -903,6 +998,25 @@ namespace HDTplugins.Services
             {
                 var hit = _timewarpStatsCache.TryGetValue(cacheKey, out summary);
                 HdtLog.Info($"[BGStats][Perf][TimewarpStatsCache] {(hit ? "hit" : "miss")} filter={filter} rows={summary?.Rows?.Count ?? 0} elapsed={sw.ElapsedMilliseconds}ms");
+                return hit;
+            }
+        }
+
+        public bool TryGetCachedQuestStats(double scoreLine, out QuestStatsSummary summary)
+        {
+            var sw = Stopwatch.StartNew();
+            summary = null;
+            if (!IsSnapshotCacheCurrent())
+            {
+                HdtLog.Info($"[BGStats][Perf][QuestStatsCache] miss reason=snapshot elapsed={sw.ElapsedMilliseconds}ms");
+                return false;
+            }
+
+            var cacheKey = BuildStatsCacheKey("quests", NormalizeScoreLine(scoreLine).ToString("F1"));
+            lock (_cacheLock)
+            {
+                var hit = _questStatsCache.TryGetValue(cacheKey, out summary);
+                HdtLog.Info($"[BGStats][Perf][QuestStatsCache] {(hit ? "hit" : "miss")} rows={summary?.Rows?.Count ?? 0} elapsed={sw.ElapsedMilliseconds}ms");
                 return hit;
             }
         }
@@ -1546,6 +1660,7 @@ namespace HDTplugins.Services
             _tavernTempoCache = null;
             _trinketStatsCache.Clear();
             _timewarpStatsCache.Clear();
+            _questStatsCache.Clear();
         }
 
         private IReadOnlyList<string> GetSelectedArchiveFinalFilePaths()

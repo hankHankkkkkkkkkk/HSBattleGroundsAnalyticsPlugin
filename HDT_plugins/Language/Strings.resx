@@ -568,7 +568,13 @@
   <data name="QuestStats_PageTitle" xml:space="preserve">
     <value>Quest Stats</value>
   </data>
+  <data name="QuestStats_HeaderName" xml:space="preserve">
+    <value>Quest</value>
+  </data>
+  <data name="QuestStats_HeaderReward" xml:space="preserve">
+    <value>Reward</value>
+  </data>
   <data name="QuestStats_Empty" xml:space="preserve">
-    <value>Quest data UI is ready. Business logic will be added later.</value>
+    <value>No quest data for the current selection.</value>
   </data>
 </root>

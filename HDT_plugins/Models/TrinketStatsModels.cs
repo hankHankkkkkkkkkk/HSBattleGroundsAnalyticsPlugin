@@ -55,4 +55,23 @@ namespace HDTplugins.Models
         public double FirstRate { get; set; }
         public double ScoreRate { get; set; }
     }
+
+    public class QuestStatsSummary
+    {
+        public int EligibleMatches { get; set; }
+        public List<QuestStatsRow> Rows { get; set; } = new List<QuestStatsRow>();
+    }
+
+    public class QuestStatsRow
+    {
+        public string CardId { get; set; }
+        public string CardName { get; set; }
+        public string RewardCardId { get; set; }
+        public string RewardCardName { get; set; }
+        public int MatchCount { get; set; }
+        public double PickRate { get; set; }
+        public double AveragePlacement { get; set; }
+        public double FirstRate { get; set; }
+        public double ScoreRate { get; set; }
+    }
 }

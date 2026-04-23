@@ -672,7 +672,13 @@
   <data name="QuestStats_PageTitle" xml:space="preserve">
     <value>任务数据</value>
   </data>
+  <data name="QuestStats_HeaderName" xml:space="preserve">
+    <value>任务</value>
+  </data>
+  <data name="QuestStats_HeaderReward" xml:space="preserve">
+    <value>奖励</value>
+  </data>
   <data name="QuestStats_Empty" xml:space="preserve">
-    <value>任务数据页面接口已预留，具体业务逻辑后续实现。</value>
+    <value>当前选择范围内暂无任务数据。</value>
   </data>
 </root>

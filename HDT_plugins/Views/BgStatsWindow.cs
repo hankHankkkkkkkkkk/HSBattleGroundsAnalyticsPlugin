@@ -58,6 +58,7 @@ namespace HDTplugins.Views
             public TavernTempoSummary TavernSummary { get; set; }
             public TrinketStatsSummary TrinketSummary { get; set; }
             public TimewarpStatsSummary TimewarpSummary { get; set; }
+            public QuestStatsSummary QuestSummary { get; set; }
         }
 
         private enum SidebarSection
@@ -2371,6 +2372,8 @@ namespace HDTplugins.Views
                 result.TrinketSummary = _store.LoadTrinketStats(scoreLine, _currentTrinketFilter);
             else if (page == MatchStatsPage.Timewarp)
                 result.TimewarpSummary = _store.LoadTimewarpStats(scoreLine, _currentTimewarpFilter);
+            else if (page == MatchStatsPage.Quests)
+                result.QuestSummary = _store.LoadQuestStats(scoreLine);
             return result;
         }
 
@@ -2411,6 +2414,8 @@ namespace HDTplugins.Views
                         loadResult.TrinketSummary = _store.LoadTrinketStats(scoreLine, trinketFilter);
                     else if (page == MatchStatsPage.Timewarp)
                         loadResult.TimewarpSummary = _store.LoadTimewarpStats(scoreLine, timewarpFilter);
+                    else if (page == MatchStatsPage.Quests)
+                        loadResult.QuestSummary = _store.LoadQuestStats(scoreLine);
                     return loadResult;
                 });
                 HdtLog.Info($"[BGStats][Perf][MatchStats] asyncLoad page={page} stepMs={sw.ElapsedMilliseconds - loadStart} elapsed={sw.ElapsedMilliseconds}ms");
@@ -2471,7 +2476,7 @@ namespace HDTplugins.Views
             else if (loadResult?.Page == MatchStatsPage.Timewarp)
                 RenderTimewarpStatsRows(loadResult.TimewarpSummary);
             else if (loadResult?.Page == MatchStatsPage.Quests)
-                RenderQuestStatsView();
+                RenderQuestStatsView(loadResult.QuestSummary);
             HdtLog.Info($"[BGStats][Perf][MatchStats] renderBody page={loadResult?.Page.ToString() ?? "null"} elapsed={sw.ElapsedMilliseconds}ms");
         }
 
@@ -2502,7 +2507,15 @@ namespace HDTplugins.Views
                 return true;
             }
 
-            return true;
+            if (page == MatchStatsPage.Quests)
+            {
+                if (!_store.TryGetCachedQuestStats(scoreLine, out var questSummary))
+                    return false;
+                result.QuestSummary = questSummary;
+                return true;
+            }
+
+            return false;
         }
 
         private UIElement BuildMatchStatsPageBar(Thickness margin)
@@ -2585,18 +2598,18 @@ namespace HDTplugins.Views
             HdtLog.Info($"[BGStats][Perf][TavernTempoUI] render sections={summary?.Sections?.Count ?? 0} elapsed={sw.ElapsedMilliseconds}ms");
         }
 
-        private void RenderQuestStatsView()
+        private void RenderQuestStatsView(QuestStatsSummary summary)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            var key = BuildMatchStatsUiCacheKey("quests");
+            var key = BuildMatchStatsUiCacheKey("quests", $"rows={summary?.Rows?.Count ?? 0}");
             if (!TryGetCachedMatchStatsUi(key, out var content))
             {
-                content = BuildQuestStatsPlaceholderView();
+                content = BuildQuestStatsView(summary);
                 CacheMatchStatsUi(key, content);
             }
 
             SetMatchStatsBody(content);
-            HdtLog.Info($"[BGStats][Perf][QuestStatsUI] render elapsed={sw.ElapsedMilliseconds}ms");
+            HdtLog.Info($"[BGStats][Perf][QuestStatsUI] render rawRows={summary?.Rows?.Count ?? 0} elapsed={sw.ElapsedMilliseconds}ms");
         }
 
         private UIElement BuildTrinketStatsView(TrinketStatsSummary summary)
@@ -2663,9 +2676,8 @@ namespace HDTplugins.Views
 
         private IReadOnlyList<TrinketStatsRow> SortTrinketRows(IReadOnlyList<TrinketStatsRow> rows)
         {
-            // Hide catalog-only trinkets that have no appearances or picks in the current data set.
             var ordered = (rows ?? Array.Empty<TrinketStatsRow>())
-                .Where(HasTrinketData)
+                .Where(HasPositivePickRate)
                 .ToList();
             switch (_trinketSortColumn)
             {
@@ -2807,7 +2819,10 @@ namespace HDTplugins.Views
 
             var grid = CreateTrinketGrid();
             border.Child = grid;
-            grid.Children.Add(CreateTavernTempoCell(row.CardName, 0, FontWeights.SemiBold, LightForegroundBrush));
+            var nameCell = CreateTavernTempoCell(row.CardName, 0, FontWeights.SemiBold, LightForegroundBrush);
+            if (nameCell is FrameworkElement nameElement && !string.IsNullOrWhiteSpace(row.CardId))
+                AttachArtPreview(nameElement, new ArtPreviewEntry(row.CardName, CardArtService.GetCardPreviewUrls(row.CardId)));
+            grid.Children.Add(nameCell);
             grid.Children.Add(CreateTavernTempoCell(row.MatchCount.ToString(CultureInfo.CurrentCulture), 1, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
             grid.Children.Add(CreateTavernTempoCell(row.MatchCount > 0 ? row.AveragePlacement.ToString("F2", CultureInfo.CurrentCulture) : "-", 2, FontWeights.Normal, row.MatchCount > 0 ? GetPlacementBrush(row.AveragePlacement) : NeutralValueBrush, TextAlignment.Right));
             grid.Children.Add(CreateTavernTempoCell(FormatRate(row.PickRate, row.MatchCount > 0), 3, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
@@ -2892,7 +2907,9 @@ namespace HDTplugins.Views
 
         private IReadOnlyList<TimewarpStatsRow> SortTimewarpRows(IReadOnlyList<TimewarpStatsRow> rows)
         {
-            var ordered = rows ?? Array.Empty<TimewarpStatsRow>();
+            var ordered = (rows ?? Array.Empty<TimewarpStatsRow>())
+                .Where(HasPositivePickRate)
+                .ToList();
             switch (_timewarpSortColumn)
             {
                 case TimewarpSortColumn.Name:
@@ -3060,16 +3077,82 @@ namespace HDTplugins.Views
             return grid;
         }
 
-        private UIElement BuildQuestStatsPlaceholderView()
+        private UIElement BuildQuestStatsView(QuestStatsSummary summary)
         {
-            return new TextBlock
+            var rows = SortQuestRows(summary?.Rows);
+            var panel = new StackPanel();
+            if (rows.Count == 0)
             {
-                Text = Loc.S("QuestStats_Empty"),
-                Foreground = MutedTextBrush,
-                FontSize = 15,
-                Margin = new Thickness(0, 10, 0, 0),
-                TextWrapping = TextWrapping.Wrap
-            };
+                panel.Children.Add(new TextBlock
+                {
+                    Text = Loc.S("Common_NoData"),
+                    Foreground = MutedTextBrush,
+                    FontSize = 15,
+                    Margin = new Thickness(0, 10, 0, 0),
+                    TextWrapping = TextWrapping.Wrap
+                });
+                return panel;
+            }
+
+            panel.Children.Add(BuildQuestHeaderRow());
+            foreach (var row in rows)
+                panel.Children.Add(BuildQuestRow(row));
+            return panel;
+        }
+
+        private static IReadOnlyList<QuestStatsRow> SortQuestRows(IReadOnlyList<QuestStatsRow> rows)
+        {
+            return (rows ?? Array.Empty<QuestStatsRow>())
+                .Where(row => row != null && row.PickRate > 0)
+                .OrderByDescending(row => row.MatchCount)
+                .ThenBy(row => row.AveragePlacement)
+                .ThenBy(row => row.CardName, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
+        }
+
+        private UIElement BuildQuestHeaderRow()
+        {
+            var border = CreateCardBorder(SurfaceAltBrush, new Thickness(14, 10, 14, 10), new Thickness(0, 0, 0, 8));
+
+            var grid = CreateQuestGrid();
+            border.Child = grid;
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("QuestStats_HeaderName"), 0, FontWeights.SemiBold, Brushes.White));
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("QuestStats_HeaderReward"), 1, FontWeights.SemiBold, Brushes.White));
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("Common_MatchesLabel"), 2, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("TrinketStats_HeaderPickRate"), 3, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("Common_AvgPlacementLabel"), 4, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("Common_FirstRateLabel"), 5, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(Loc.S("Common_ScoreRateLabel"), 6, FontWeights.SemiBold, Brushes.White, TextAlignment.Right));
+            return border;
+        }
+
+        private UIElement BuildQuestRow(QuestStatsRow row)
+        {
+            var border = CreateListRowBorder(SurfaceBrush, new Thickness(14, 12, 14, 12), new Thickness(0, 0, 0, 6));
+
+            var grid = CreateQuestGrid();
+            border.Child = grid;
+            grid.Children.Add(CreateTavernTempoCell(row.CardName, 0, FontWeights.SemiBold, LightForegroundBrush));
+            grid.Children.Add(CreateTavernTempoCell(row.RewardCardName, 1, FontWeights.Normal, LightForegroundBrush));
+            grid.Children.Add(CreateTavernTempoCell(row.MatchCount.ToString(CultureInfo.CurrentCulture), 2, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(FormatRate(row.PickRate, row.MatchCount > 0), 3, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(row.MatchCount > 0 ? row.AveragePlacement.ToString("F2", CultureInfo.CurrentCulture) : "-", 4, FontWeights.Normal, row.MatchCount > 0 ? GetPlacementBrush(row.AveragePlacement) : NeutralValueBrush, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(FormatRate(row.FirstRate, row.MatchCount > 0), 5, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
+            grid.Children.Add(CreateTavernTempoCell(FormatRate(row.ScoreRate, row.MatchCount > 0), 6, FontWeights.Normal, LightForegroundBrush, TextAlignment.Right));
+            return border;
+        }
+
+        private Grid CreateQuestGrid()
+        {
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.7, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.7, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.75, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.9, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.9, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.9, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.9, GridUnitType.Star) });
+            return grid;
         }
 
         private UIElement BuildTavernTempoSummaryCard(TavernTempoSummary summary)
@@ -3270,9 +3353,14 @@ namespace HDTplugins.Views
             }
         }
 
-        private static bool HasTrinketData(TrinketStatsRow row)
+        private static bool HasPositivePickRate(TrinketStatsRow row)
         {
-            return row != null && (row.AppearanceCount > 0 || row.PickCount > 0 || row.MatchCount > 0);
+            return row != null && row.PickRate > 0;
+        }
+
+        private static bool HasPositivePickRate(TimewarpStatsRow row)
+        {
+            return row != null && row.PickRate > 0;
         }
 
         private void AppendHistoryRows(int renderVersion)
